@@ -14,7 +14,9 @@ import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from common import CLASSIFIER_URL, HttpError, db, error, http_json, serve
+import hmac
+
+from common import CLASSIFIER_URL, DEV_KEY, PUBLIC_URL, HttpError, db, error, http_json, serve
 
 PENDING_TTL = timedelta(hours=24)
 USERNAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{1,28}[Bb][Oo][Tt]$")
@@ -218,6 +220,8 @@ def delete_bot(req, m, body):
 
 
 def dev_activate(req, m, body):
+    if DEV_KEY and not hmac.compare_digest((req.headers.get("X-Dev-Key") or "").encode(), DEV_KEY.encode()):
+        raise HttpError(403, error("invalid_request", "Missing or wrong X-Dev-Key"))
     row = get_row(m.group(1))
     if to_api(row)["status"] != "pending":
         raise HttpError(409, error("invalid_request", f"Bot is {to_api(row)['status']}, not pending"))
@@ -232,7 +236,7 @@ def dev_activate(req, m, body):
                   " WHERE bot_id=?",
                   (secret, f"https://t.me/{username}", (body or {}).get("telegram_token"), row["bot_id"]))
     return 200, {"status": "active", "secret_token": secret,
-                 "webhook_url": f"http://127.0.0.1:8002/webhook/{row['bot_id']}"}
+                 "webhook_url": f"{PUBLIC_URL or 'http://127.0.0.1:8002'}/webhook/{row['bot_id']}"}
 
 
 ROUTES = [

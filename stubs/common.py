@@ -11,6 +11,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 HERE = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.environ.get("STUB_DB", os.path.join(HERE, "data.db"))
 CLASSIFIER_URL = os.environ.get("CLASSIFIER_URL", "http://127.0.0.1:8001/v1")
+PUBLIC_URL = os.environ.get("PUBLIC_URL", "").rstrip("/")  # e.g. https://app.fly.dev when hosted
+HOST = os.environ.get("HOST", "127.0.0.1")
+DEV_KEY = os.environ.get("DEV_KEY")  # when set, /_dev endpoints need header X-Dev-Key
 
 
 def load_taxonomy():
@@ -120,7 +123,7 @@ def serve(routes, port, name):
             self.send_response(204)
             self.send_header("Access-Control-Allow-Origin", "*")
             self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
-            self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Telegram-Bot-Api-Secret-Token")
+            self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Telegram-Bot-Api-Secret-Token, X-Dev-Key")
             self.end_headers()
 
         def do_GET(self):
@@ -135,5 +138,5 @@ def serve(routes, port, name):
         def log_message(self, fmt, *args):
             print(f"[{name}] {self.address_string()} {fmt % args}", file=sys.stderr)
 
-    print(f"[{name}] listening on http://127.0.0.1:{port}", file=sys.stderr)
-    ThreadingHTTPServer(("127.0.0.1", port), Handler).serve_forever()
+    print(f"[{name}] listening on http://{HOST}:{port}", file=sys.stderr)
+    ThreadingHTTPServer((HOST, port), Handler).serve_forever()
