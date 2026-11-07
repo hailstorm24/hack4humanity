@@ -11,7 +11,11 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 HERE = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.environ.get("STUB_DB", os.path.join(HERE, "data.db"))
 CLASSIFIER_URL = os.environ.get("CLASSIFIER_URL", "http://127.0.0.1:8001/v1")
-PUBLIC_URL = os.environ.get("PUBLIC_URL", "").rstrip("/")  # e.g. https://app.fly.dev when hosted
+# Public base URL when hosted. Render sets RENDER_EXTERNAL_URL / RENDER_EXTERNAL_HOSTNAME itself.
+PUBLIC_URL = (os.environ.get("PUBLIC_URL")
+              or os.environ.get("RENDER_EXTERNAL_URL")
+              or (f"https://{os.environ['RENDER_EXTERNAL_HOSTNAME']}" if os.environ.get("RENDER_EXTERNAL_HOSTNAME") else "")
+              ).rstrip("/")
 HOST = os.environ.get("HOST", "127.0.0.1")
 DEV_KEY = os.environ.get("DEV_KEY")  # when set, /_dev endpoints need header X-Dev-Key
 
@@ -54,6 +58,7 @@ def http_json(method, url, body=None, timeout=10):
 
 
 def db():
+    os.makedirs(os.path.dirname(DB_PATH) or ".", exist_ok=True)
     conn = sqlite3.connect(DB_PATH, timeout=5)
     conn.row_factory = sqlite3.Row
     conn.execute("""CREATE TABLE IF NOT EXISTS bots (

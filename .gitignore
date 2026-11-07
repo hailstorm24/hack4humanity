@@ -1,0 +1,6 @@
+# secrets / local state
+stubs/.dev_key
+*.db
+.env*
+__pycache__/
+.DS_Store
