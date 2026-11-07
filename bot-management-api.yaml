@@ -1,0 +1,325 @@
+openapi: 3.1.0
+info:
+  title: Bot Management API
+  version: 1.0.0
+  description: |
+    Called by the UI to create debunking bots. Each bot has a frozen
+    configuration: a confidence threshold plus a mapping from narratives
+    (and optionally sub-narratives) to static response text.
+
+    ## Creation flow (Telegram managed bots)
+    1. UI calls `POST /bots` with the full config. The API stores it with
+       status `pending` and returns `creation_link`.
+    2. The organizer opens `creation_link` in Telegram and confirms. Telegram
+       creates the bot on the organizer's account, managed by our manager bot.
+       (Telegram does not allow fully headless creation; the user's confirmation
+       is required.)
+    3. The manager bot receives the managed-bot update, exports the new bot's
+       token, sets its name/description/commands, generates a random per-bot
+       `secret_token` (32-256 chars of `[A-Za-z0-9_-]`), and calls
+       `setWebhook` pointing to the shared runtime (`/webhook/{bot_id}`) with
+       that `secret_token`. Bot token and secret are kept in the store and
+       never returned by this API.
+    4. Status becomes `active`. If the organizer never confirms, status becomes
+       `expired` after `expires_at`.
+
+    Configuration is immutable after creation. To change responses, create a
+    new bot (or delete this one and create it again).
+
+    Narrative and sub-narrative names in `responses` are validated against
+    the classifier taxonomy (`GET /taxonomy`). The taxonomy version in force
+    at creation is stored on the bot as `taxonomy_version`.
+
+    Deletion is a soft delete: the record stays readable with status
+    `deleted` so there is a record of what the bot used to say.
+
+    Username availability cannot be pre-checked by the system (Telegram only
+    lets users call `bots.checkUsername`); a taken username surfaces as a
+    failure in step 2 and the bot moves to `failed`.
+
+    No authentication (prototype). Note that `GET /bots` therefore lists every
+    bot; once auth exists it must be scoped to the caller.
+servers:
+  - url: https://api.yourdomain/v1
+paths:
+  /taxonomy:
+    get:
+      operationId: getTaxonomy
+      summary: Narratives and sub-narratives available as mapping keys
+      description: |
+        Pass-through of the classifier's `GET /taxonomy`, so the UI only talks
+        to this API. Use these strings verbatim in `responses`.
+      responses:
+        '200':
+          description: The taxonomy
+          content:
+            application/json:
+              schema:
+                $ref: 'common.yaml#/components/schemas/Taxonomy'
+        '503':
+          $ref: 'common.yaml#/components/responses/Error'
+  /bots:
+    get:
+      operationId: listBots
+      summary: List bots, newest first
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/BotStatus'
+        - name: cursor
+          in: query
+          required: false
+          description: Opaque `next_cursor` from a previous page.
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+      responses:
+        '200':
+          description: One page of bots
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [bots, next_cursor]
+                properties:
+                  bots:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Bot'
+                  next_cursor:
+                    type: [string, 'null']
+                    description: null when there are no more pages.
+        '400':
+          $ref: 'common.yaml#/components/responses/Error'
+    post:
+      operationId: createBot
+      summary: Create a bot (starts the Telegram creation flow)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BotConfig'
+            example:
+              display_name: "Odesa Fact Check"
+              username: "odesa_factcheck_bot"
+              description: "Перешлите мне сообщение, и я проверю его на известные пропагандистские нарративы."
+              start_message: "Привет! Перешлите мне пост, и я его проверю."
+              confidence_threshold: 0.6
+              responses:
+                - narrative: "Blaming the war on others rather than the invader"
+                  subnarrative: null
+                  text: "Россия начала полномасштабное вторжение 24 февраля 2022 года. Хронология и источники: …"
+                - narrative: "Blaming the war on others rather than the invader"
+                  subnarrative: "The West are the aggressors"
+                  text: "Утверждения о «провокации НАТО» — частый приём. Что показывают независимые источники: …"
+                - narrative: "Discrediting Ukraine"
+                  subnarrative: null
+                  text: "Это утверждение повторяет распространённый нарратив. Проверенные факты: …"
+              other_response: "Мы не нашли здесь известного пропагандистского нарратива. Это не значит, что это правда — проверьте источник."
+      responses:
+        '201':
+          description: Bot record created; awaiting organizer confirmation in Telegram.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Bot'
+        '400':
+          $ref: 'common.yaml#/components/responses/Error'
+        '422':
+          description: |
+            Config is invalid (`error: validation_failed`). Each problem is
+            listed in `details`, e.g.:
+            - `unknown_narrative`: narrative not in the taxonomy
+            - `unknown_subnarrative`: sub-narrative not listed under that narrative
+            - `duplicate_mapping`: (narrative, subnarrative) pair repeated
+            - `out_of_range`: e.g. confidence_threshold outside 0-1
+            - `pattern_mismatch`: e.g. username not matching Telegram rules
+          content:
+            application/json:
+              schema:
+                $ref: 'common.yaml#/components/schemas/Error'
+              example:
+                error: validation_failed
+                message: "2 problems in config"
+                details:
+                  - field: "responses[2].narrative"
+                    issue: unknown_narrative
+                  - field: "responses[3].subnarrative"
+                    issue: unknown_subnarrative
+        '503':
+          description: Taxonomy could not be fetched from the classifier, so the config cannot be validated.
+          content:
+            application/json:
+              schema:
+                $ref: 'common.yaml#/components/schemas/Error'
+  /bots/{bot_id}:
+    parameters:
+      - name: bot_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      operationId: getBot
+      summary: Get a bot's status and config (UI polls this after creation)
+      description: Deleted bots are still returned, with status `deleted`.
+      responses:
+        '200':
+          description: The bot
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Bot'
+        '404':
+          description: No bot with this id ever existed.
+          content:
+            application/json:
+              schema:
+                $ref: 'common.yaml#/components/schemas/Error'
+    delete:
+      operationId: deleteBot
+      summary: Deactivate a bot
+      description: |
+        Soft delete: removes the webhook, stops the runtime from answering, and
+        sets status to `deleted` (the record stays readable). Idempotent:
+        deleting an already-deleted bot also returns 204. Deleting a `pending`
+        bot invalidates its `creation_link`. The Telegram account object still
+        belongs to the organizer, who can delete it via BotFather.
+      responses:
+        '204':
+          description: Deleted (or already deleted)
+        '404':
+          description: No bot with this id ever existed.
+          content:
+            application/json:
+              schema:
+                $ref: 'common.yaml#/components/schemas/Error'
+components:
+  schemas:
+    ResponseMapping:
+      type: object
+      required: [narrative, subnarrative, text]
+      additionalProperties: false
+      properties:
+        narrative:
+          type: string
+          description: Top-level narrative name, exactly as listed by `GET /taxonomy`.
+        subnarrative:
+          type: [string, 'null']
+          description: |
+            null = narrative-level response, inherited by all of that
+            narrative's sub-narratives unless a sub-narrative mapping overrides
+            it. Otherwise must be listed under `narrative` in `GET /taxonomy`.
+        text:
+          type: string
+          minLength: 1
+          maxLength: 4096
+    BotConfig:
+      type: object
+      required: [display_name, username, confidence_threshold, responses, other_response]
+      additionalProperties: false
+      properties:
+        display_name:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: Telegram bot display name (1-64 chars).
+        username:
+          type: string
+          pattern: '^[A-Za-z][A-Za-z0-9_]{1,28}[Bb][Oo][Tt]$'
+          minLength: 5
+          maxLength: 32
+          description: Telegram username; letters, digits, underscores, 5-32 chars, must end in "bot".
+        description:
+          type: string
+          maxLength: 512
+          description: Shown in the empty chat before the user presses Start.
+        short_description:
+          type: string
+          maxLength: 120
+          description: Shown on the bot's profile and in shared links.
+        start_message:
+          type: string
+          maxLength: 4096
+          default: "Перешлите мне сообщение, и я проверю его."
+          description: Reply to /start.
+        non_text_message:
+          type: string
+          maxLength: 4096
+          default: "Пожалуйста, перешлите текстовое сообщение или пост с подписью."
+          description: Reply when the message has no text or caption.
+        error_message:
+          type: string
+          maxLength: 4096
+          default: "Сейчас не удаётся проверить сообщение. Попробуйте позже."
+          description: Reply when the classifier is unavailable.
+        confidence_threshold:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: Labels scoring below this are ignored.
+        responses:
+          type: array
+          description: |
+            Each (narrative, subnarrative) pair may appear at most once.
+            Narratives without any mapping fall through to `other_response`.
+          items:
+            $ref: '#/components/schemas/ResponseMapping'
+        other_response:
+          type: string
+          minLength: 1
+          maxLength: 4096
+          description: Sent when no label passes the threshold or no passing label has a mapping.
+    BotStatus:
+      type: string
+      enum: [pending, active, failed, expired, deleted]
+    Bot:
+      type: object
+      required: [bot_id, status, config, taxonomy_version, created_at]
+      properties:
+        bot_id:
+          type: string
+          format: uuid
+        status:
+          $ref: '#/components/schemas/BotStatus'
+        creation_link:
+          type: string
+          format: uri
+          description: Telegram managed-bot creation link for the organizer. Present while `pending`.
+        expires_at:
+          type: string
+          format: date-time
+          description: When a `pending` bot becomes `expired`.
+        telegram_link:
+          type: string
+          format: uri
+          description: t.me link to the bot. Present once `active`.
+        failure_reason:
+          type: string
+          description: Present when `failed`, e.g. `username_occupied`, `bot_limit_exceeded`.
+        config:
+          $ref: '#/components/schemas/BotConfig'
+        taxonomy_version:
+          type: string
+          description: |
+            Classifier taxonomy the config was validated against. If the
+            classifier moves to a new version, bots on an older one may have
+            stale mapping keys.
+        created_at:
+          type: string
+          format: date-time
+        deleted_at:
+          type: string
+          format: date-time
+          description: Present when `deleted`.

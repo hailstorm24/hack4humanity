@@ -1,0 +1,128 @@
+openapi: 3.1.0
+info:
+  title: Bot Runtime (shared webhook service)
+  version: 1.0.0
+  description: |
+    One service receives Telegram updates for every managed bot and replies
+    using that bot's frozen config (read from the same store as the Bot
+    Management API). Its only callers are Telegram itself.
+
+    ## Request checks (before message handling)
+    - Unknown `bot_id`, or a bot whose status is not `active` → do nothing.
+    - `X-Telegram-Bot-Api-Secret-Token` missing or not equal (constant-time
+      compare) to the bot's stored `secret_token` → do nothing.
+    Both cases still return 200, so Telegram does not retry and probes learn
+    nothing about which bot ids exist.
+
+    ## Message handling
+    1. Ignore updates that are not a private-chat `message`.
+    2. `/start` → reply with `start_message`.
+    3. `text = message.text ?? message.caption`. If empty → reply with
+       `non_text_message`.
+    4. Call the classifier `POST /classify {text}` synchronously (timeout
+       ~10 s; the classifier targets p95 < 3 s). On error or timeout → reply
+       with `error_message`. Log `model_version` alongside the reply for
+       traceability. `text` is at most 4096 chars (Telegram's own limit), so
+       no truncation is needed before classifying.
+    5. Keep labels with `score >= confidence_threshold`, highest score first.
+    6. For each kept label, resolve its response:
+       a. mapping for (narrative, subnarrative), else
+       b. mapping for (narrative, null), else
+       c. none (skip the label).
+    7. Remove duplicate response texts (two sub-narratives can inherit the same
+       narrative-level text), keeping the first occurrence.
+    8. If no responses remain → use `other_response`.
+    9. Join responses with a blank line. If the result exceeds 4096 chars,
+       split into several messages at response boundaries (a single response
+       is already capped at 4096 by the management API).
+    10. Send each message with `reply_parameters.message_id` set to the
+        incoming message so the reply threads under the forward.
+
+    The service always returns 200 to Telegram (even on internal errors,
+    unknown bots, or bad secrets) so Telegram does not retry the update.
+servers:
+  - url: https://bots.yourdomain
+paths:
+  /webhook/{bot_id}:
+    post:
+      operationId: receiveUpdate
+      summary: Telegram update for one managed bot
+      description: Registered via `setWebhook` by the manager bot at activation.
+      parameters:
+        - name: bot_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: X-Telegram-Bot-Api-Secret-Token
+          in: header
+          required: true
+          description: |
+            The per-bot `secret_token` the manager bot passed to `setWebhook`.
+            Requests with a missing or wrong value are silently dropped (still
+            200), so outsiders can't make the bot spend classifier calls.
+          schema:
+            type: string
+            pattern: '^[A-Za-z0-9_-]{32,256}$'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Update'
+            example:
+              update_id: 100200300
+              message:
+                message_id: 42
+                chat: {id: 555000111, type: private}
+                from: {id: 555000111, is_bot: false, first_name: "Oleh"}
+                date: 1762500000
+                forward_origin:
+                  type: channel
+                  date: 1762490000
+                  chat: {id: -1001234567890, type: channel, title: "Some channel"}
+                  message_id: 9876
+                text: "НАТО годами провоцировало Россию, эта война — ответ Запада."
+      responses:
+        '200':
+          description: |
+            Always returned: for handled updates, ignored updates, unknown or
+            inactive bot ids, bad secrets, and internal errors alike.
+components:
+  schemas:
+    Update:
+      description: Subset of the Telegram Bot API Update object that the runtime reads.
+      type: object
+      required: [update_id]
+      properties:
+        update_id:
+          type: integer
+        message:
+          $ref: '#/components/schemas/Message'
+    Message:
+      type: object
+      required: [message_id, chat, date]
+      properties:
+        message_id:
+          type: integer
+        chat:
+          type: object
+          required: [id, type]
+          properties:
+            id:
+              type: integer
+            type:
+              type: string
+              enum: [private, group, supergroup, channel]
+        from:
+          type: object
+        date:
+          type: integer
+        forward_origin:
+          type: object
+          description: Present on forwarded messages. Not required; direct messages are also checked.
+        text:
+          type: string
+        caption:
+          type: string

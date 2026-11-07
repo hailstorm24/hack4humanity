@@ -1,0 +1,138 @@
+openapi: 3.1.0
+info:
+  title: Narrative Classifier API
+  version: 1.0.0
+  description: |
+    Classifies a Russian-language message against the SemEval 2025 Task 10
+    Ukraine-Russia War (URW) narrative taxonomy.
+
+    - Input is assumed to be Russian. No language detection is performed.
+    - Classification is multi-label: every narrative/sub-narrative the model
+      scores is returned with its confidence. Filtering by threshold is the
+      caller's job (the bot runtime applies each bot's own threshold).
+    - Labels are returned as the taxonomy's display names, exactly as written
+      in the taxonomy. The bot management API and UI use the same strings as
+      mapping keys, so they must match character-for-character.
+    - `GET /taxonomy` is the single source of truth for those strings. The
+      management API validates mapping keys against it and the UI builds its
+      pickers from it.
+    - No authentication (internal service).
+servers:
+  - url: https://classifier.internal/v1
+paths:
+  /classify:
+    post:
+      operationId: classify
+      summary: Classify one message
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClassifyRequest'
+            example:
+              text: "НАТО годами провоцировало Россию, эта война — ответ Запада."
+      responses:
+        '200':
+          description: |
+            Classification result. `labels` may be empty, meaning no URW
+            narrative was detected.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClassifyResponse'
+              example:
+                labels:
+                  - narrative: "Blaming the war on others rather than the invader"
+                    subnarrative: "The West are the aggressors"
+                    score: 0.88
+                  - narrative: "Discrediting the West, Diplomacy"
+                    subnarrative: null
+                    score: 0.41
+                model_version: "urw-ru-2026.11"
+        '400':
+          $ref: 'common.yaml#/components/responses/Error'
+        '503':
+          $ref: 'common.yaml#/components/responses/Error'
+  /taxonomy:
+    get:
+      operationId: getTaxonomy
+      summary: List every narrative and sub-narrative the model can return
+      description: |
+        Every `Label` returned by `/classify` uses a narrative and (if
+        non-null) sub-narrative listed here, under the same
+        `taxonomy_version`.
+      responses:
+        '200':
+          description: The taxonomy
+          content:
+            application/json:
+              schema:
+                $ref: 'common.yaml#/components/schemas/Taxonomy'
+              example:
+                taxonomy_version: "semeval2025-t10-urw"
+                narratives:
+                  - name: "Blaming the war on others rather than the invader"
+                    subnarratives:
+                      - "The West are the aggressors"
+                  - name: "Hidden plots by secret schemes of powerful groups"
+                    subnarratives: []
+  /health:
+    get:
+      operationId: health
+      summary: Liveness check
+      responses:
+        '200':
+          description: Service is up
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    const: ok
+components:
+  schemas:
+    ClassifyRequest:
+      type: object
+      required: [text]
+      additionalProperties: false
+      properties:
+        text:
+          type: string
+          minLength: 1
+          maxLength: 4096
+          description: |
+            Message text (or media caption). 4096 is Telegram's maximum text
+            message length; captions are at most 1024.
+    Label:
+      type: object
+      required: [narrative, subnarrative, score]
+      properties:
+        narrative:
+          type: string
+          description: Top-level narrative name (the parent). Always present.
+        subnarrative:
+          type: [string, 'null']
+          description: |
+            Sub-narrative name, or null when the model assigns only the
+            top-level narrative (e.g. "Hidden plots by secret schemes of
+            powerful groups", which has no sub-narratives).
+        score:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: Model confidence for this label.
+    ClassifyResponse:
+      type: object
+      required: [labels]
+      properties:
+        labels:
+          type: array
+          description: Sorted by score, highest first.
+          items:
+            $ref: '#/components/schemas/Label'
+        model_version:
+          type: string
+          description: Optional; the runtime logs it with each reply for traceability.

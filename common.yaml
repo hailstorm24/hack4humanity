@@ -1,0 +1,65 @@
+openapi: 3.1.0
+info:
+  title: Shared components
+  version: 1.0.0
+  description: |
+    Components shared by the Bot Management, Bot Runtime and Classifier APIs.
+    Referenced as `common.yaml#/components/...`.
+paths: {}
+components:
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          enum: [invalid_request, validation_failed, not_found, model_unavailable, internal]
+          description: Machine-readable error code.
+        message:
+          type: string
+          description: Human-readable explanation.
+        details:
+          type: array
+          description: Per-field problems, present for `validation_failed`.
+          items:
+            type: object
+            required: [field, issue]
+            properties:
+              field:
+                type: string
+                description: JSON path into the request body, e.g. `responses[2].subnarrative`.
+              issue:
+                type: string
+                description: |
+                  Machine-readable issue, e.g. `unknown_narrative`,
+                  `unknown_subnarrative`, `duplicate_mapping`, `out_of_range`,
+                  `pattern_mismatch`.
+    Taxonomy:
+      type: object
+      required: [taxonomy_version, narratives]
+      properties:
+        taxonomy_version:
+          type: string
+          description: Identifier of the taxonomy release, e.g. `semeval2025-t10-urw`.
+        narratives:
+          type: array
+          items:
+            type: object
+            required: [name, subnarratives]
+            properties:
+              name:
+                type: string
+                description: Narrative display name, exactly as the classifier returns it.
+              subnarratives:
+                type: array
+                description: Sub-narrative display names. May be empty.
+                items:
+                  type: string
+  responses:
+    Error:
+      description: Error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
