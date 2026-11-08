@@ -11,7 +11,7 @@ Each stage ends with a check that must pass before the next stage starts.
 | 2 | Telegram client + fake Telegram API for tests | Done (2026-11-07): local tests |
 | 3 | Manager bot (BotFather, webhook) | Done (2026-11-07): hosted + phone |
 | 4 | Real creation link + matching the new bot | Done (2026-11-07): real Telegram via Desktop |
-| 5 | Activation (token, profile, webhook) | Code done, tests pass; hosted check after deploy |
+| 5 | Activation (token, profile, webhook) | Done (2026-11-08): real Telegram via Desktop |
 | 6 | Real replies | Not started |
 | 7 | Lifecycle: delete, token change, expiry, retire dev endpoint | Not started |
 
@@ -112,4 +112,4 @@ Code: `stubs/manager.py` (`activate`, `bot_token`) and `stubs/runtime.py` (`send
 - [x] Local: 38 tests; 37 pass and 1 is skipped (Stage 7). Five Stage 5 tests: activation end to end (renamed username, profile, webhook, secret matches, token not stored or returned, answers a reader), webhook failure then retry via the link, token fetch failure, profile failure not fatal, token rotation.
 - [x] The tests catch breakage: dropping the 401 re-fetch or the retry-on-reopen each make a test fail.
 - [x] With no token, the smoke test passes.
-- [ ] Hosted (Telegram Desktop): create a bot via the API → open `creation_link` → create. The manager replies with the t.me link; `GET /v1/bots/<id>` shows `active`; the Render log shows `activated: bot … as @…`; the new bot's profile shows the config's name and description.
+- [x] Hosted (Telegram Desktop, 2026-11-08): bot `bf529fb1-…` created via the API, opened `creation_link`, kept the suggested username. `GET /v1/bots/<id>` went from `pending` to `active` with `telegram_username: h4h_s5_bf13ee_bot` and `telegram_link: https://t.me/h4h_s5_bf13ee_bot`, without the dev endpoint.
