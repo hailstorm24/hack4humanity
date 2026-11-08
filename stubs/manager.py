@@ -51,7 +51,7 @@ import threading
 from datetime import datetime, timezone
 
 import telegram
-from common import DEV_KEY, PUBLIC_URL, HttpError, db, error
+from common import DEV_KEY, PUBLIC_URL, HttpError, UpdateDedup, db, error
 
 TOKEN = os.environ.get("MANAGER_BOT_TOKEN", "")
 WEBHOOK_PATH = "/telegram/manager"
@@ -77,6 +77,7 @@ TEXT = {
 _state = {"username": os.environ.get("MANAGER_BOT_USERNAME", "STUB_MANAGER_bot"),
           "can_manage_bots": None, "webhook_set": False, "startup_error": None}
 _lock = threading.Lock()
+_seen = UpdateDedup()
 _bot_tokens = {}  # telegram_bot_id -> managed bot token (memory only; see bot_token)
 
 
@@ -256,6 +257,9 @@ def handle_update(req, m, update):
         log("drop: bad or missing secret")
         return 200, None
     if not isinstance(update, dict):
+        return 200, None
+    if _seen.is_repeat("manager", update.get("update_id")):
+        log(f"drop: repeat update {update.get('update_id')}")
         return 200, None
 
     if isinstance(update.get("managed_bot"), dict):

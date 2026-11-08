@@ -1,7 +1,7 @@
 """End-to-end bot lifecycle: the real service (stubs/server.py) against the fake Telegram.
 
-The service runs as a subprocess with TELEGRAM_API_BASE pointing at the fake,
-TELEGRAM_SEND=1 and a throwaway SQLite file. The fake plays Telegram: it
+The service runs as a subprocess with TELEGRAM_API_BASE pointing at the fake
+and a throwaway SQLite file (sending is on by default since Stage 6). The fake plays Telegram: it
 delivers updates to the service's webhooks and records what the service sends.
 
 Steps that later stages build are skipped tests named after their stage. As
@@ -68,9 +68,10 @@ class LifecycleTest(unittest.TestCase):
         cls.base = f"http://127.0.0.1:{cls.port}"
         env = {**os.environ, "PORT": str(cls.port), "HOST": "127.0.0.1", "DEV_KEY": DEV_KEY,
                "STUB_DB": os.path.join(cls.tmp.name, "test.db"), "DATABASE_URL": "",
-               "TELEGRAM_API_BASE": cls.fake.base_url, "TELEGRAM_SEND": "1",
+               "TELEGRAM_API_BASE": cls.fake.base_url,
                "PUBLIC_URL": f"http://127.0.0.1:{cls.port}", "MANAGER_BOT_TOKEN": cls.manager}
         env.pop("MANAGER_BOT_USERNAME", None)  # the username must come from getMe
+        env.pop("TELEGRAM_SEND", None)  # Stage 6: sending must be on by default
         cls.log = open(os.path.join(cls.tmp.name, "server.log"), "w")
         cls.proc = subprocess.Popen([sys.executable, "server.py"], cwd=STUBS, env=env,
                                     stdout=cls.log, stderr=subprocess.STDOUT)
@@ -373,6 +374,50 @@ class LifecycleTest(unittest.TestCase):
         self.assertEqual(status, 200)
         sent = self.fake.sent_to(READER["id"])[-1]
         self.assertEqual((sent["bot"], sent["text"]), ("rotate_test_bot", "BLAME"))
+
+    # --- Stage 6: real replies ----------------------------------------------------
+
+    def test_stage6_redelivered_update_gets_one_reply(self):
+        _, token = self._new_active_bot("redeliver_test_bot")
+        before = len(self.fake.sent_to(READER["id"]))
+        msg = self.fake._message(READER, {"text": "НАТО провоцировало Россию"})
+        for _ in range(2):  # Telegram retries when we answer too slowly
+            self.assertEqual(self.fake.deliver(token, {"update_id": 9_100_001, "message": msg})[0], 200)
+        self.assertEqual([m["text"] for m in self.fake.sent_to(READER["id"])[before:]], ["BLAME"])
+        # A new update_id is answered as usual.
+        self.fake.deliver(token, {"update_id": 9_100_002, "message": msg})
+        self.assertEqual(len(self.fake.sent_to(READER["id"])) - before, 2)
+
+    def test_stage6_same_update_id_on_another_bot_is_not_a_repeat(self):
+        _, one = self._new_active_bot("dedup_one_test_bot")
+        _, two = self._new_active_bot("dedup_two_test_bot")
+        before = len(self.fake.sent_to(READER["id"]))
+        msg = self.fake._message(READER, {"text": "Хорошая погода"})
+        self.fake.deliver(one, {"update_id": 9_200_001, "message": msg})
+        self.fake.deliver(two, {"update_id": 9_200_001, "message": msg})  # update_ids are per bot
+        self.assertEqual([m["bot"] for m in self.fake.sent_to(READER["id"])[before:]],
+                         ["dedup_one_test_bot", "dedup_two_test_bot"])
+
+    def test_stage6_manager_ignores_redelivered_update(self):
+        org = new_organizer()
+        msg = self.fake._message(org, {"text": "/start"})
+        for _ in range(2):
+            self.fake.deliver(self.manager, {"update_id": 9_300_001, "message": msg})
+        self.assertEqual(len(self.fake.sent_to(org["id"])), 1)
+
+    def test_stage6_bot_without_token_only_logs(self):
+        """Dev-activated without a token (how the hosted smoke test works): replies are echoed, not sent."""
+        bot_id = self._pending(username="tokenless_test_bot")
+        status, act = self.api("POST", f"/v1/_dev/bots/{bot_id}/activate", {}, {"X-Dev-Key": DEV_KEY})
+        self.assertEqual(status, 200, act)
+        before = len(self.fake.outbox)
+        update = {"update_id": 1, "message": {"message_id": 1, "date": 1, "from": READER,
+                                              "chat": {"id": READER["id"], "type": "private"},
+                                              "text": "НАТО провоцировало Россию"}}
+        status, body = self.api("POST", f"/webhook/{bot_id}", update,
+                                {"X-Telegram-Bot-Api-Secret-Token": act["secret_token"]})
+        self.assertEqual((status, body), (200, {"stub_replies": ["BLAME"]}))
+        self.assertEqual(len(self.fake.outbox), before)
 
     @unittest.skip("Stage 7: DELETE calls deleteWebhook")
     def test_stage7_delete_removes_webhook(self):
