@@ -7,8 +7,8 @@ Each stage ends with a check that must pass before the next stage starts.
 | Stage | What | Status |
 | --- | --- | --- |
 | 0 | Decisions + contract changes | Done |
-| 1 | Persistent storage | Code done; hosted check needs a Neon database |
-| 2 | Telegram client + fake Telegram API for tests | Not started |
+| 1 | Persistent storage | Done (2026-11-07): Render + Neon |
+| 2 | Telegram client + fake Telegram API for tests | Done (2026-11-07): local tests |
 | 3 | Manager bot (BotFather, webhook) | Not started |
 | 4 | Real creation link + matching the new bot | Not started |
 | 5 | Activation (token, profile, webhook) | Not started |
@@ -51,4 +51,21 @@ python3 tools/smoke_test.py <base_url> --persist-check <bot_id>
 
 - [x] Local SQLite: smoke test passes; a bot survives a server restart; an old-schema `data.db` is upgraded in place.
 - [x] Local Postgres (Docker): smoke test passes; a bot survives recreating the app container; an old-schema table is upgraded in place.
-- [ ] Render + Neon: a bot survives a redeploy.
+- [x] Render + Neon: smoke test passes on the live URL; an active bot (with a changed username) survives a manual redeploy.
+
+## Stage 2 checks
+
+```bash
+python3 -m unittest discover -s tests -v
+```
+
+- `stubs/telegram.py`: the Bot API client. Base URL from `TELEGRAM_API_BASE`, tokens kept out of errors, and one retry on a short 429 wait.
+- `tests/fake_telegram.py`: a fake Bot API. It records calls, can inject errors, and delivers updates to webhooks with the secret header, including `managed_bot` creation.
+- `tests/test_telegram_client.py` (13 tests): every client method against the fake.
+- `tests/test_lifecycle.py`: runs the real `server.py` against the fake. It currently covers replies, threading, `/start`, photos, no-match, group messages, filtered updates, forged updates, send failures and deletion. Stages 3, 4, 5 and 7 are skipped tests with their final assertions already written; each stage removes its skip.
+
+- [x] All 24 tests pass (20 run, 4 skipped for later stages).
+- [x] The tests catch breakage: removing reply threading or the secret check makes them fail.
+- [x] The runtime sends replies through `telegram.py` (`TELEGRAM_SEND=1`), not hand-built requests.
+
+The fake follows the docs, not observed behaviour. Stages 3–4 check the real API; if Telegram differs, fix the fake first, then the code.

@@ -5,15 +5,16 @@ faked by default: replies are logged and echoed in the 200 response body
 (Telegram ignores webhook response bodies, so this is harmless) so you can
 test with curl.
 
-Set TELEGRAM_SEND=1 to really call sendMessage, using the `telegram_token`
-passed to the dev activate endpoint.
+Set TELEGRAM_SEND=1 to really call sendMessage (via telegram.py, so
+TELEGRAM_API_BASE can point at a fake), using the `telegram_token` passed to
+the dev activate endpoint.
 """
 import hmac
 import json
 import os
 import sys
-import urllib.request
 
+import telegram
 from common import CLASSIFIER_URL, db, http_json, init_db, serve
 
 TELEGRAM_SEND = os.environ.get("TELEGRAM_SEND") == "1"
@@ -53,11 +54,7 @@ def send(row, chat_id, reply_to, text):
     if not (TELEGRAM_SEND and row["telegram_token"]):
         log(f"(fake send) chat={chat_id} reply_to={reply_to}: {text[:80]!r}")
         return
-    payload = {"chat_id": chat_id, "text": text, "reply_parameters": {"message_id": reply_to}}
-    req = urllib.request.Request(
-        f"https://api.telegram.org/bot{row['telegram_token']}/sendMessage",
-        data=json.dumps(payload).encode(), headers={"Content-Type": "application/json"})
-    urllib.request.urlopen(req, timeout=10).read()
+    telegram.send_message(row["telegram_token"], chat_id, text, reply_to_message_id=reply_to)
 
 
 def webhook(req, m, update):
@@ -99,8 +96,8 @@ def webhook(req, m, update):
     for r in replies:  # step 10
         try:
             send(row, chat_id, reply_to, r)
-        except OSError as e:
-            log(f"sendMessage failed: {e!r}")
+        except telegram.TelegramError as e:
+            log(f"sendMessage failed: {e}")
     return 200, {"stub_replies": replies}
 
 
