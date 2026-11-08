@@ -7,11 +7,7 @@ const APP_LINKS = [
   { href: "/bots", label: "My bots" },
   { href: "/new", label: "New bot" },
 ];
-const HOME_LINKS = [
-  { href: "/#idea", label: "The idea" },
-  { href: "/#moments", label: "Moments" },
-  { href: "/bots", label: "My bots" },
-];
+const HOME_LINKS = [{ href: "/bots", label: "My bots" }];
 
 const MQ = "(prefers-color-scheme: dark)";
 const subscribe = (cb: () => void) => {
@@ -61,7 +57,7 @@ export function Masthead() {
     <header className="top">
       <div className="wrap">
         <Link href="/" className="brand">
-          Narrative Bots
+          Fakt
         </Link>
         <nav aria-label="Main">
           {links.map((l) => (

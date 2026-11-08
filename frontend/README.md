@@ -1,4 +1,4 @@
-# Narrative Bots frontend
+# Fakt frontend
 
 Next.js 16 (App Router, React 19, Tailwind v4) website for the Hack4Humanity narrative-bot builder.
 

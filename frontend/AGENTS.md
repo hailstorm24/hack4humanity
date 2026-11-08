@@ -2,7 +2,7 @@
 
 This version has breaking changes: APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` before writing code. Heed deprecation notices. For example, `params` in a page is a Promise.
 
-# Narrative Bots frontend
+# Fakt frontend
 
 The website for the Hack4Humanity narrative-bot builder. An organizer writes replies for propaganda narratives, creates a Telegram bot, confirms it in Telegram, and manages their bots. It talks only to the Bot Management API; the contract is `../FRONTEND_API.md` and `../frontend-openapi.yaml`.
 
@@ -21,7 +21,7 @@ Types in `src/types/api.ts` come from `src/types/api.gen.ts`, which is generated
 - A bot in `pending` status polls `GET /bots/{id}` every 3 s on its page.
 
 ## Design
-Warm dark by default (light follows the system, with a manual toggle stored in localStorage as `nb-theme`). Geologica for display and labels, Onest for text; both cover Cyrillic. Palette: sage and peach as the two accents, a gold for "working" states, three soft background orbs. Pills for actions, 20px surfaces, a blurred sticky header. The landing page is a sticky phone showing a Telegram (iOS) chat that follows scroll (`src/components/Landing.tsx`); its colors are Telegram's own, set with `light-dark()` under `.tgp`. All tokens are CSS variables at the top of `src/app/globals.css`. Respect `prefers-reduced-motion`.
+Warm dark by default (light follows the system, with a manual toggle stored in localStorage as `nb-theme`). The device's own system font (San Francisco, Roboto, Segoe UI), like Telegram; no web fonts. Telegram palette: dark `#0E1621` with `#2AABEE`, `#7F8B99` and `#4DCD5E`, donkey brown `#A19679` as the second accent, white and a darker `#0077B5` blue in the light theme. Pills for actions, 20px surfaces, a blurred sticky header. The landing page is a sticky phone showing a Telegram (iOS) chat that follows scroll (`src/components/Landing.tsx`); its colors are Telegram's own, set with `light-dark()` under `.tgp`. All tokens are CSS variables at the top of `src/app/globals.css`. Respect `prefers-reduced-motion`.
 
 ## Rules
 - TypeScript strict, no `any`. 2-space indentation. Mobile-first, no horizontal scroll.

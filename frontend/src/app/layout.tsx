@@ -1,22 +1,18 @@
 import type { Metadata, Viewport } from "next";
-import { Geologica, Onest } from "next/font/google";
 import "./globals.css";
 import { Masthead } from "@/components/Masthead";
 import { ToastHost } from "@/components/Toast";
 import { WakingBanner } from "@/components/WakingBanner";
 
-const display = Geologica({ variable: "--font-display", subsets: ["latin", "cyrillic"], display: "swap" });
-const text = Onest({ variable: "--font-text", subsets: ["latin", "cyrillic"], display: "swap" });
-
 export const metadata: Metadata = {
-  title: "Narrative Bots",
+  title: "Fakt",
   description: "Build a Telegram bot that recognizes propaganda narratives and answers with the replies you wrote.",
 };
 export const viewport: Viewport = { width: "device-width", initialScale: 1, viewportFit: "cover" };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en" suppressHydrationWarning className={`${display.variable} ${text.variable}`}>
+    <html lang="en" suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: "try{var t=localStorage.getItem('nb-theme');if(t)document.documentElement.dataset.theme=t}catch(e){}" }} />
       </head>

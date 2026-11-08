@@ -1,6 +1,6 @@
 "use client";
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 
 const MOMENTS = [
   {
@@ -32,6 +32,23 @@ const MOMENTS = [
 
 const CLAIM = "НАТО спровоцировало эту войну, Россия лишь защищает себя.";
 const REPLY = "Утверждения о «провокации НАТО» — частый приём.";
+
+type ChatMsg = { id: string; dir: "in" | "out"; time: string; text: string; fwd?: string; lang?: string };
+const claim: ChatMsg = { id: "claim", dir: "out", time: "9:41", fwd: "Новости дня", lang: "ru", text: CLAIM };
+// What is on screen in each scene. A message that stays across scenes keeps its key, so it never re-animates.
+const CHAT: ChatMsg[][] = [
+  [claim],
+  [claim],
+  [claim, { id: "reply", dir: "in", time: "9:41", lang: "ru", text: REPLY }],
+  [
+    { id: "rain", dir: "out", time: "9:42", lang: "ru", text: "Сегодня в Одессе дождь." },
+    { id: "fallback", dir: "in", time: "9:42", text: "I couldn’t recognize a known narrative in this message." },
+  ],
+  [
+    { id: "start", dir: "out", time: "9:41", text: "/start" },
+    { id: "greet", dir: "in", time: "9:41", text: "Forward me a message and I’ll reply if I recognize a known narrative." },
+  ],
+];
 
 const Ticks = () => (
   <svg width="16" height="10" viewBox="0 0 16 10" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -81,26 +98,13 @@ function Phone({ scene }: { scene: number }) {
           </div>
           <span className="tgp-ava">O</span>
         </div>
-        <div className="tgp-chat" key={scene}>
+        <div className="tgp-chat">
           <span className="tgp-date">Today</span>
-          <div className="scene" style={{ display: "grid", gap: 4 }}>
-            {scene === 4 ? (
-              <>
-                <Msg dir="out" time="9:41">/start</Msg>
-                <Msg dir="in" time="9:41">Forward me a message and I’ll reply if I recognize a known narrative.</Msg>
-              </>
-            ) : scene === 3 ? (
-              <>
-                <Msg dir="out" time="9:42" lang="ru">Сегодня в Одессе дождь.</Msg>
-                <Msg dir="in" time="9:42">I couldn’t recognize a known narrative in this message.</Msg>
-              </>
-            ) : (
-              <>
-                <Msg dir="out" time="9:41" fwd="Новости дня" lang="ru">{CLAIM}</Msg>
-                {scene === 2 && <Msg dir="in" time="9:41" lang="ru">{REPLY}</Msg>}
-              </>
-            )}
-          </div>
+          {CHAT[scene].map((m) => (
+            <Msg key={m.id} dir={m.dir} time={m.time} fwd={m.fwd} lang={m.lang}>
+              {m.text}
+            </Msg>
+          ))}
         </div>
         <div className="tgp-bar">
           <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="m21 11-8.6 8.6a5.5 5.5 0 0 1-7.8-7.8l8.6-8.6a3.7 3.7 0 0 1 5.2 5.2l-8.6 8.6a1.8 1.8 0 0 1-2.6-2.6L15 6.5" /></svg>
@@ -126,7 +130,7 @@ function Aside({ scene }: { scene: number }) {
   return (
     <div className="aside-card" aria-live="polite">
       {a && (
-        <div className="found scene">
+        <div className="found">
           <span className="label">{a.label}</span>
           <span>{a.line}</span>
           {a.meter !== undefined && (
@@ -144,7 +148,6 @@ function Aside({ scene }: { scene: number }) {
 
 export function Landing() {
   const [scene, setScene] = useState(0);
-  const phoneRef = useRef<HTMLDivElement>(null);
 
   // Scroll drives the phone: whichever moment crosses the middle of the viewport is "playing".
   useEffect(() => {
@@ -159,10 +162,6 @@ export function Landing() {
     return () => io.disconnect();
   }, []);
 
-  const play = (i: number) => {
-    setScene(i);
-    if (window.matchMedia("(max-width: 900px)").matches) phoneRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
-  };
 
   return (
     <div className="wrap fade">
@@ -171,7 +170,7 @@ export function Landing() {
           <section className="hero-copy">
             <p className="eyebrow">A Telegram bot builder · Hack4Humanity</p>
             <h1 className="h1">
-              A bot that answers propaganda with <span className="hl">your words.</span>
+              A bot that answers propaganda with <span className="hl">your community.</span>
             </h1>
             <p className="lede">
               Forward it a message. It spots the narrative behind it and replies with the response you wrote in advance. <b style={{ color: "var(--text)", fontWeight: 500 }}>You decide what it says.</b>
@@ -193,16 +192,15 @@ export function Landing() {
           <section id="moments" aria-labelledby="moments-h" style={{ minHeight: 0, paddingBottom: 0 }}>
             <p className="sec-no"><b>02</b> Five moments</p>
             <h2 className="big" id="moments-h">Five moments of a Telegram bot, played on the phone.</h2>
-            <p className="body">Each moment drives the phone beside it. Tap “Play on the phone” to replay one.</p>
+            <p className="body">Each moment drives the phone beside it.</p>
           </section>
 
           {MOMENTS.map((m, i) => (
             <section key={m.title} className="moment" data-moment={i} data-on={scene === i} aria-labelledby={`m-${i}`}>
               <div className="numeral" aria-hidden="true">{String(i + 1).padStart(2, "0")}</div>
-              <h3 className="big" id={`m-${i}`} style={{ font: "300 clamp(1.25rem,2.2vw,1.625rem)/1.15 var(--display)", letterSpacing: "-0.03em" }}>{m.title}.</h3>
+              <h3 className="big" id={`m-${i}`} style={{ font: "600 clamp(1.25rem,2.2vw,1.625rem)/1.2 var(--display)", letterSpacing: "-0.03em" }}>{m.title}.</h3>
               <p className="body">{m.body}</p>
               <div className="tags">{m.tags.map((t) => <span className="tag" key={t}>{t}</span>)}</div>
-              <div><button type="button" className="btn" onClick={() => play(i)}>Play on the phone</button></div>
             </section>
           ))}
 
@@ -216,7 +214,7 @@ export function Landing() {
           </section>
         </div>
 
-        <div className="phone-col" ref={phoneRef}>
+        <div className="phone-col">
           <Phone scene={scene} />
           <Aside scene={scene} />
           <p className="now" aria-live="polite"><span className="live" aria-hidden="true" />Now playing · <b>{String(scene + 1).padStart(2, "0")} {MOMENTS[scene].title}</b></p>
