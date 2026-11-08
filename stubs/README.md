@@ -24,6 +24,7 @@ Taxonomy: `taxonomy.json`, SemEval 2025 Task 10 URW (11 narratives, 38 sub-narra
 
 - **Cost:** free. The service sleeps after 15 min with no traffic, and the first request after that takes about 1 minute.
 - **Data:** set `DATABASE_URL` (a Postgres connection string, e.g. Neon's free tier) in the Render dashboard so bots survive sleeps and deploys. Without it, the service falls back to SQLite on the container disk, which Render wipes on every sleep, restart or deploy.
+- **Manager bot:** set `MANAGER_BOT_TOKEN` (from @BotFather) in the dashboard. On startup the service registers the manager's webhook at `/telegram/manager`; check it with `GET /v1/_dev/manager` (`X-Dev-Key` header).
 - **Dev key:** Render generates `DEV_KEY`. Copy it from the service's Environment tab in the dashboard.
 - **Deploys:** `autoDeploy` rebuilds on every push to the connected branch.
 - **Run the same way locally:** `PORT=8080 HOST=127.0.0.1 python3 server.py`

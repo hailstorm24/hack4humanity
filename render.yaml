@@ -16,3 +16,5 @@ services:
         generateValue: true
       - key: DATABASE_URL     # Postgres connection string; set in the dashboard, never committed
         sync: false
+      - key: MANAGER_BOT_TOKEN  # manager bot token from @BotFather; set in the dashboard, never committed
+        sync: false

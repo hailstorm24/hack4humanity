@@ -61,7 +61,8 @@ class LifecycleTest(unittest.TestCase):
         env = {**os.environ, "PORT": str(cls.port), "HOST": "127.0.0.1", "DEV_KEY": DEV_KEY,
                "STUB_DB": os.path.join(cls.tmp.name, "test.db"), "DATABASE_URL": "",
                "TELEGRAM_API_BASE": cls.fake.base_url, "TELEGRAM_SEND": "1",
-               "PUBLIC_URL": f"http://127.0.0.1:{cls.port}", "MANAGER_BOT_USERNAME": "h4h_manager_bot"}
+               "PUBLIC_URL": f"http://127.0.0.1:{cls.port}", "MANAGER_BOT_TOKEN": cls.manager}
+        env.pop("MANAGER_BOT_USERNAME", None)  # the username must come from getMe
         cls.log = open(os.path.join(cls.tmp.name, "server.log"), "w")
         cls.proc = subprocess.Popen([sys.executable, "server.py"], cwd=STUBS, env=env,
                                     stdout=cls.log, stderr=subprocess.STDOUT)
@@ -174,10 +175,49 @@ class LifecycleTest(unittest.TestCase):
 
     # --- Later stages: shape fixed now, enabled as each stage lands ---------------
 
-    @unittest.skip("Stage 3: manager webhook route + startup setWebhook")
+    # --- Stage 3: manager bot --------------------------------------------------
+
     def test_stage3_manager_webhook_registered_on_startup(self):
         info = telegram.get_webhook_info(self.manager)
         self.assertEqual(info["url"], f"{self.base}/telegram/manager")
+        self.assertEqual(info["allowed_updates"], ["message", "managed_bot"])
+        secret = self.fake.bot(self.manager)["webhook"]["secret_token"]
+        self.assertRegex(secret, r"^[A-Za-z0-9_-]{32,256}$")
+        self.assertEqual([c["bot"] for c in self.fake.calls_to("getMe")][:1], ["h4h_manager_bot"])
+
+    def test_stage3_manager_answers_private_messages(self):
+        status, _ = self.fake.user_sends(self.manager, ORGANIZER, text="/start")
+        self.assertEqual(status, 200)
+        sent = self.fake.sent_to(ORGANIZER["id"])[-1]
+        self.assertEqual(sent["bot"], "h4h_manager_bot")
+        self.assertIn("Привет", sent["text"])
+
+    def test_stage3_manager_drops_updates_without_secret(self):
+        before = len(self.fake.outbox)
+        update = {"update_id": 1, "message": {"message_id": 1, "date": 1, "from": ORGANIZER,
+                                              "chat": {"id": ORGANIZER["id"], "type": "private"}, "text": "/start"}}
+        self.assertEqual(self.api("POST", "/telegram/manager", update), (200, None))
+        self.assertEqual(self.api("POST", "/telegram/manager", update,
+                                  {"X-Telegram-Bot-Api-Secret-Token": "wrong"}), (200, None))
+        self.assertEqual(len(self.fake.outbox), before)
+
+    def test_stage3_managed_bot_update_accepted_quietly(self):
+        # Until Stage 5 it is only logged; it must not error or message the organizer.
+        before = len(self.fake.sent_to(ORGANIZER["id"]))
+        _, responses = self.fake.create_managed_bot(self.manager, ORGANIZER, "stage3_probe_bot", "Probe")
+        self.assertEqual([r[0] for r in responses], [200, 200])
+        self.assertEqual(len(self.fake.sent_to(ORGANIZER["id"])), before)
+
+    def test_stage3_dev_status_reports_setup_without_secrets(self):
+        self.assertEqual(self.api("GET", "/v1/_dev/manager")[0], 403)
+        status, st = self.api("GET", "/v1/_dev/manager", headers={"X-Dev-Key": DEV_KEY})
+        self.assertEqual(status, 200)
+        self.assertEqual((st["configured"], st["username"], st["can_manage_bots"]), (True, "h4h_manager_bot", True))
+        self.assertEqual(st["webhook_url"], st["expected_webhook_url"])
+        self.assertIsNone(st["startup_error"])
+        dumped = json.dumps(st)
+        self.assertNotIn(self.manager, dumped)
+        self.assertNotIn(self.fake.bot(self.manager)["webhook"]["secret_token"], dumped)
 
     @unittest.skip("Stage 4: /start <bot_id> records organizer and offers the create button")
     def test_stage4_start_link_offers_create_button(self):
