@@ -1,0 +1,98 @@
+{
+  "taxonomy_version": "semeval2025-t10-urw",
+  "source": "https://propaganda.math.unipd.it/semeval2025task10/NARRATIVE-TAXONOMIES.pdf",
+  "narratives": [
+    {
+      "name": "Blaming the war on others rather than the invader",
+      "subnarratives": [
+        "Ukraine is the aggressor",
+        "The West are the aggressors"
+      ]
+    },
+    {
+      "name": "Discrediting Ukraine",
+      "subnarratives": [
+        "Rewriting Ukraine's history",
+        "Discrediting Ukrainian nation and society",
+        "Discrediting Ukrainian military",
+        "Discrediting Ukrainian government and officials and policies",
+        "Ukraine is a puppet of the West",
+        "Ukraine is a hub for criminal activities",
+        "Ukraine is associated with nazism",
+        "Situation in Ukraine is hopeless"
+      ]
+    },
+    {
+      "name": "Russia is the Victim",
+      "subnarratives": [
+        "The West is russophobic",
+        "Russia actions in Ukraine are only self-defence",
+        "UA is anti-RU extremists"
+      ]
+    },
+    {
+      "name": "Praise of Russia",
+      "subnarratives": [
+        "Praise of Russian military might",
+        "Praise of Russian President Vladimir Putin",
+        "Russia is a guarantor of peace and prosperity",
+        "Russia has international support from a number of countries and people",
+        "Russian invasion has strong national support"
+      ]
+    },
+    {
+      "name": "Overpraising the West",
+      "subnarratives": [
+        "NATO will destroy Russia",
+        "The West belongs in the right side of history",
+        "The West has the strongest international support"
+      ]
+    },
+    {
+      "name": "Speculating war outcomes",
+      "subnarratives": [
+        "Russian army is collapsing",
+        "Russian army will lose all the occupied territories",
+        "Ukrainian army is collapsing"
+      ]
+    },
+    {
+      "name": "Discrediting the West, Diplomacy",
+      "subnarratives": [
+        "The EU is divided",
+        "The West is weak",
+        "The West is overreacting",
+        "The West does not care about Ukraine, only about its interests",
+        "Diplomacy does/will not work",
+        "West is tired of Ukraine"
+      ]
+    },
+    {
+      "name": "Negative Consequences for the West",
+      "subnarratives": [
+        "Sanctions imposed by Western countries will backfire",
+        "The conflict will increase the Ukrainian refugee flows to Europe"
+      ]
+    },
+    {
+      "name": "Distrust towards Media",
+      "subnarratives": [
+        "Western media is an instrument of propaganda",
+        "Ukrainian media cannot be trusted"
+      ]
+    },
+    {
+      "name": "Amplifying war-related fears",
+      "subnarratives": [
+        "By continuing the war we risk WWIII",
+        "Russia will also attack other countries",
+        "There is a real possibility that nuclear weapons will be employed",
+        "NATO should/will directly intervene"
+      ]
+    },
+    {
+      "name": "Hidden plots by secret schemes of powerful groups",
+      "subnarratives": []
+    }
+  ]
+}
