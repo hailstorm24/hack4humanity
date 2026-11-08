@@ -1,0 +1,2 @@
+# Only needed when DATABASE_URL points at Postgres (hosted). Local SQLite runs need nothing.
+psycopg[binary]==3.2.3

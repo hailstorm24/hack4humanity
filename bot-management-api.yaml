@@ -9,18 +9,29 @@ info:
 
     ## Creation flow (Telegram managed bots)
     1. UI calls `POST /bots` with the full config. The API stores it with
-       status `pending` and returns `creation_link`.
-    2. The organizer opens `creation_link` in Telegram and confirms. Telegram
-       creates the bot on the organizer's account, managed by our manager bot.
-       (Telegram does not allow fully headless creation; the user's confirmation
-       is required.)
-    3. The manager bot receives the managed-bot update, exports the new bot's
-       token, sets its name/description/commands, generates a random per-bot
-       `secret_token` (32-256 chars of `[A-Za-z0-9_-]`), and calls
+       status `pending` and returns `creation_link`, a deep link to our manager
+       bot: `https://t.me/<manager_bot>?start=<bot_id>`.
+    2. The organizer opens `creation_link`. The manager bot receives
+       `/start <bot_id>`, records the organizer's Telegram user id against that
+       bot, and replies with a "create bot" button (`request_managed_bot`)
+       pre-filled with `display_name` and `username`.
+    3. The organizer taps it and confirms. Telegram creates the bot on the
+       organizer's account, managed by our manager bot. (Telegram does not allow
+       fully headless creation; the organizer's confirmation is required.)
+    4. The manager bot receives a `managed_bot` update naming the creator and
+       the new bot, and matches it to the pending record by the creator's
+       Telegram user id (so it still matches if the organizer changed the
+       username). It fetches the token with `getManagedBotToken`, sets the
+       bot's name, description and short description, generates a random
+       per-bot `secret_token` (32-256 chars of `[A-Za-z0-9_-]`), and calls
        `setWebhook` pointing to the shared runtime (`/webhook/{bot_id}`) with
-       that `secret_token`. Bot token and secret are kept in the store and
-       never returned by this API.
-    4. Status becomes `active`. If the organizer never confirms, status becomes
+       that `secret_token`. The secret is stored; the bot token is not (it is
+       re-fetched with `getManagedBotToken` when needed). Neither is ever
+       returned by this API.
+    5. Status becomes `active` and the manager bot sends the organizer the
+       bot's t.me link. If setup fails after Telegram created the bot, it
+       stays `pending` and the organizer is asked to open `creation_link`
+       again, which retries. If the organizer never confirms, status becomes
        `expired` after `expires_at`.
 
     Configuration is immutable after creation. To change responses, create a
@@ -33,9 +44,10 @@ info:
     Deletion is a soft delete: the record stays readable with status
     `deleted` so there is a record of what the bot used to say.
 
-    Username availability cannot be pre-checked by the system (Telegram only
-    lets users call `bots.checkUsername`); a taken username surfaces as a
-    failure in step 2 and the bot moves to `failed`.
+    `config.username` is only a suggestion. Telegram checks availability in
+    its own app and lets the organizer pick another username, so the bot may
+    go live under a different one. The real handle is returned as
+    `telegram_username` (and in `telegram_link`); `config` is left unchanged.
 
     No authentication (prototype). Note that `GET /bots` therefore lists every
     bot; once auth exists it must be scoped to the caller.
@@ -296,7 +308,10 @@ components:
         creation_link:
           type: string
           format: uri
-          description: Telegram managed-bot creation link for the organizer. Present while `pending`.
+          description: |
+            Deep link that starts creation in Telegram:
+            `https://t.me/<manager_bot>?start=<bot_id>`. Present while
+            `pending`. Treat it as opaque and show it as the main call to action.
         expires_at:
           type: string
           format: date-time
@@ -304,10 +319,19 @@ components:
         telegram_link:
           type: string
           format: uri
-          description: t.me link to the bot. Present once `active`.
+          description: t.me link to the bot, built from `telegram_username`. Present once `active`.
+        telegram_username:
+          type: string
+          description: |
+            The bot's actual Telegram username. Present once `active`. May
+            differ from `config.username` if the organizer chose another one
+            during creation.
         failure_reason:
           type: string
-          description: Present when `failed`, e.g. `username_occupied`, `bot_limit_exceeded`.
+          description: |
+            Present when `failed`, e.g. `bot_limit_exceeded` (the organizer
+            already owns Telegram's maximum number of bots). Taken usernames do
+            not fail: Telegram asks the organizer for another one.
         config:
           $ref: '#/components/schemas/BotConfig'
         taxonomy_version:

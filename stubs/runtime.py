@@ -1,24 +1,33 @@
 """Bot Runtime stub (bot-runtime-api.yaml) on :8002.
 
-Implements the full message-handling algorithm from the spec. Sending is
-faked by default: replies are logged and echoed in the 200 response body
-(Telegram ignores webhook response bodies, so this is harmless) so you can
-test with curl.
+Implements the full message-handling algorithm from the spec. Replies are
+always echoed in the 200 response body as `stub_replies` (Telegram ignores
+webhook response bodies, so this is harmless and handy with curl).
 
-Set TELEGRAM_SEND=1 to really call sendMessage, using the `telegram_token`
-passed to the dev activate endpoint.
+Replies are really sent (sendMessage via telegram.py, so TELEGRAM_API_BASE can
+point at a fake) whenever the bot has a token: from manager.bot_token, i.e.
+getManagedBotToken (cached in memory, re-fetched once after a 401), or the
+`telegram_token` passed to the dev activate endpoint. Bots without one (no
+MANAGER_BOT_TOKEN, or dev-activated without a token) only log their replies.
+TELEGRAM_SEND=0 forces log-only.
+
+Telegram re-delivers an update if we don't answer in time (e.g. while Render
+wakes up). Each bot's recent update_ids are remembered in memory, and repeats
+are acknowledged without replying again.
 """
 import hmac
 import json
 import os
 import sys
-import urllib.request
 
-from common import CLASSIFIER_URL, db, http_json, serve
+import manager
+import telegram
+from common import CLASSIFIER_URL, UpdateDedup, db, http_json, init_db, serve
 
-TELEGRAM_SEND = os.environ.get("TELEGRAM_SEND") == "1"
+TELEGRAM_SEND = os.environ.get("TELEGRAM_SEND", "1") != "0"
 MAX_LEN = 4096
 OK = (200, None)
+_seen = UpdateDedup()
 
 
 def log(msg):
@@ -50,14 +59,17 @@ def resolve_replies(cfg, labels):
 
 
 def send(row, chat_id, reply_to, text):
-    if not (TELEGRAM_SEND and row["telegram_token"]):
+    token = manager.bot_token(row) if TELEGRAM_SEND else None
+    if not token:
         log(f"(fake send) chat={chat_id} reply_to={reply_to}: {text[:80]!r}")
         return
-    payload = {"chat_id": chat_id, "text": text, "reply_parameters": {"message_id": reply_to}}
-    req = urllib.request.Request(
-        f"https://api.telegram.org/bot{row['telegram_token']}/sendMessage",
-        data=json.dumps(payload).encode(), headers={"Content-Type": "application/json"})
-    urllib.request.urlopen(req, timeout=10).read()
+    try:
+        telegram.send_message(token, chat_id, text, reply_to_message_id=reply_to)
+    except telegram.TelegramError as e:
+        if e.code != 401 or row["telegram_token"]:
+            raise
+        # Cached token went stale (rotated in BotFather?): fetch a fresh one and retry once.
+        telegram.send_message(manager.bot_token(row, refresh=True), chat_id, text, reply_to_message_id=reply_to)
 
 
 def webhook(req, m, update):
@@ -71,6 +83,9 @@ def webhook(req, m, update):
     given = req.headers.get("X-Telegram-Bot-Api-Secret-Token") or ""
     if not hmac.compare_digest(given.encode(), (row["secret_token"] or "").encode()):
         log(f"drop: bad secret for {bot_id}")
+        return OK
+    if isinstance(update, dict) and _seen.is_repeat(bot_id, update.get("update_id")):
+        log(f"drop: repeat update {update.get('update_id')} for {bot_id}")
         return OK
 
     msg = (update or {}).get("message") if isinstance(update, dict) else None
@@ -99,13 +114,13 @@ def webhook(req, m, update):
     for r in replies:  # step 10
         try:
             send(row, chat_id, reply_to, r)
-        except OSError as e:
-            log(f"sendMessage failed: {e!r}")
+        except telegram.TelegramError as e:
+            log(f"sendMessage failed: {e}")
     return 200, {"stub_replies": replies}
 
 
 ROUTES = [("POST", r"/webhook/([0-9a-fA-F-]{36})", webhook)]
 
 if __name__ == "__main__":
-    db().close()
+    print(f"[runtime] storage: {init_db()}", file=sys.stderr)
     serve(ROUTES, 8002, "runtime")

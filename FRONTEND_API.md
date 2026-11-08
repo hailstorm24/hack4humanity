@@ -1,10 +1,10 @@
 # Bot Management API: Frontend Contract
 
-Last updated 2026-11-07. Repo snapshot of the shared doc [Bot Management API — Frontend Contract](https://claude.ai/artifact/55JGYDL6dDZEaMprvcVjiA). The machine-readable contract is [`frontend-openapi.yaml`](frontend-openapi.yaml).
+Last updated 2026-11-08. Repo snapshot of the shared doc [Bot Management API — Frontend Contract](https://claude.ai/artifact/55JGYDL6dDZEaMprvcVjiA). The machine-readable contract is [`frontend-openapi.yaml`](frontend-openapi.yaml).
 
 ## Overview
 
-The UI talks to one API, Bot Management, at `https://h4h-narrative-stubs.onrender.com/v1`. It runs on Render's free tier as a stub: real validation, but a keyword classifier and a simulated Telegram step. It sleeps after 15 min idle, so the next request takes up to a minute, and all bots are wiped on each sleep or redeploy.
+The UI talks to one API, Bot Management, at `https://h4h-narrative-stubs.onrender.com/v1`. It runs on Render's free tier: real validation and real Telegram bot creation, but a keyword classifier instead of the model. It sleeps after 15 min idle, so the next request takes up to a minute. Bots are stored in Postgres and survive sleeps and redeploys.
 
 | Item | Value |
 | --- | --- |
@@ -21,14 +21,14 @@ The UI never calls the classifier or the webhook runtime. Narrative names come f
 
 ## Creation flow and status
 
-A bot only answers messages once it is `active`, and that needs the organizer to confirm in Telegram. The UI drives this by showing `creation_link` and polling the bot.
+A bot only answers messages once it is `active`, and that needs the organizer to create it in Telegram. The UI drives this by showing `creation_link` and polling the bot.
 
 ```mermaid
 stateDiagram-v2
     direction LR
     [*] --> pending: POST /v1/bots
-    pending --> active: organizer confirms
-    pending --> failed: username taken
+    pending --> active: organizer creates it in Telegram
+    pending --> failed: setup error (reserved)
     pending --> expired: 24 h, no confirm
     pending --> deleted: DELETE
     active --> deleted: DELETE
@@ -37,12 +37,15 @@ stateDiagram-v2
 ```
 
 1. `POST /v1/bots` returns 201 with `status: "pending"`, `creation_link` and `expires_at`.
-2. Show `creation_link` as the primary button, plus the time left until `expires_at`.
-3. Poll `GET /v1/bots/{bot_id}` every few seconds (3 s suggested) while `pending`. Stop once the status changes.
+2. Show `creation_link` as the primary button, plus the time left until `expires_at`. It opens our manager bot (`@h4h_manager_bot`) in Telegram, which replies with a "Создать бота" button. Telegram then shows the suggested name and username, which the organizer may change, and creates the bot.
+   - Tell organizers to use **Telegram Desktop** for now. The iOS app doesn't support the create button yet (it opens an empty "Forward" screen).
+3. Poll `GET /v1/bots/{bot_id}` every few seconds (3 s suggested) while `pending`. Stop once the status changes. Activation usually lands a few seconds after the organizer confirms.
 4. Branch on the new status:
-   - `active`: show `telegram_link` (`https://t.me/<username>`).
-   - `failed`: show `failure_reason`. To retry, create a new bot with a different username.
+   - `active`: show `telegram_link` and `@telegram_username`. Use these, not `config.username`: the organizer may have picked a different username in Telegram.
+   - `failed`: show `failure_reason`. The live API doesn't produce this today; handle it anyway.
    - `expired`: offer to create the bot again.
+
+If setup fails after Telegram created the bot, the bot stays `pending` and the manager bot asks the organizer to open `creation_link` again, which retries. The UI needs nothing extra for this: keep showing the link and polling.
 
 `failed`, `expired` and `deleted` are final. A bot never returns to `pending`.
 
@@ -118,12 +121,12 @@ Response `201`, captured from the live API:
   },
   "taxonomy_version": "semeval2025-t10-urw",
   "created_at": "2026-11-07T23:47:07Z",
-  "creation_link": "https://t.me/newbot/STUB_MANAGER_bot/odesa_factcheck_bot?name=fab585fd-…",
+  "creation_link": "https://t.me/h4h_manager_bot?start=fab585fd-d91c-447f-8014-eb9358cef10f",
   "expires_at": "2026-11-08T23:47:07Z"
 }
 ```
 
-Show `creation_link` as the main call to action. The organizer must open it in Telegram and confirm.
+Show `creation_link` as the main call to action. The organizer must open it in Telegram and create the bot. Treat the link as opaque.
 
 ### GET /v1/bots
 
@@ -147,7 +150,7 @@ Returns a `Bot`. Deleted bots still return 200 with `status: "deleted"`. 404 mea
 
 ### DELETE /v1/bots/{bot_id}
 
-Returns 204 with no body. Calling it again also returns 204. The bot stays readable with `status: "deleted"` and `deleted_at`. Configs cannot be edited: to change replies, create a new bot and delete the old one.
+Returns 204 with no body. Calling it again also returns 204. The bot stops answering at once: its Telegram webhook is removed. The Telegram bot itself still belongs to the organizer, who can delete it in BotFather. The bot stays readable with `status: "deleted"` and `deleted_at`. Configs cannot be edited: to change replies, create a new bot and delete the old one.
 
 ## Schemas
 
@@ -158,7 +161,7 @@ Mirror these limits in the form so most 422s never happen. Unknown fields are re
 | Field | Type | Required | Limits | Default / notes |
 | --- | --- | --- | --- | --- |
 | `display_name` | string | yes | 1–64 chars | Telegram display name |
-| `username` | string | yes | 5–32 chars, regex `^[A-Za-z][A-Za-z0-9_]{1,28}[Bb][Oo][Tt]$` | Must end in "bot". Taken names can't be checked up front; they fail later as `username_occupied`. |
+| `username` | string | yes | 5–32 chars, regex `^[A-Za-z][A-Za-z0-9_]{1,28}[Bb][Oo][Tt]$` | Must end in "bot". Only a suggestion: Telegram checks availability in its app and lets the organizer pick another, so a taken name never fails. The real one comes back as `telegram_username`. |
 | `description` | string | no | ≤ 512 | Shown in the empty chat before Start |
 | `short_description` | string | no | ≤ 120 | Profile and shared links |
 | `start_message` | string | no | ≤ 4096 | "Перешлите мне сообщение, и я проверю его." |
@@ -189,8 +192,9 @@ A narrative-level reply covers all its sub-narratives unless a sub-narrative has
 | `created_at` | ISO 8601 | always |
 | `creation_link` | URL | `pending` |
 | `expires_at` | ISO 8601 | `pending` (24 h after creation) |
-| `telegram_link` | URL, `https://t.me/<username>` | `active` |
-| `failure_reason` | string, e.g. `username_occupied`, `bot_limit_exceeded` | `failed` |
+| `telegram_link` | URL, `https://t.me/<telegram_username>` | `active` |
+| `telegram_username` | string; may differ from `config.username` | `active` |
+| `failure_reason` | string, e.g. `bot_limit_exceeded`. Reserved: not produced today. | `failed` |
 | `deleted_at` | ISO 8601 | `deleted` |
 
 Fields not listed for the current status are omitted, not `null`.
@@ -245,18 +249,19 @@ Every error body has the same shape. On a 422, show each `details` item next to 
 
 ## Stub-only notes
 
-The hosted API is a stub. These differences go away with the real backend; nothing else in this contract changes.
+The hosted API is still partly a stub (keyword classifier, a dev-only endpoint). These differences go away with the real backend; nothing else in this contract changes.
 
-- **Activating a bot:** `creation_link` is a placeholder and opening it does nothing. To move a bot from `pending` to `active` while building the UI, call the dev-only endpoint below. It needs an `X-Dev-Key` header; ask Hailey for the key. Never call it from shipped UI code.
+- **Activating a bot without Telegram:** opening `creation_link` creates a real Telegram bot. To move a bot from `pending` to `active` without that while building the UI, call the dev-only endpoint below. It needs an `X-Dev-Key` header; ask Hailey for the key. Never call it from shipped UI code. Bots activated this way don't exist in Telegram. It returns 409 for a bot that's already linked to a real Telegram bot.
 
 ```bash
 curl -X POST https://h4h-narrative-stubs.onrender.com/v1/_dev/bots/$BOT_ID/activate \
   -H "X-Dev-Key: $DEV_KEY" -H 'Content-Type: application/json' -d '{}'
 ```
 
-- **Testing the failed state:** send body `{"fail": "username_occupied"}` to the same endpoint.
+- **Testing the failed state:** send body `{"fail": "bot_limit_exceeded"}` to the same endpoint.
 - **Testing the expired state:** pending bots expire 24 h after creation. There is no shortcut.
+- **Triggering a narrative:** the classifier matches keywords, not meaning. Every narrative and subnarrative has a demo sentence in Russian and English in `stubs/classifier_rules.json` (`demo`), or run `python3 stubs/classifier.py --demo`. Send one to an active bot to get that label's reply. "Европа" alone gives a low-score (0.41) label that most thresholds filter out.
 - **Testing a 503:** none from the UI side; the classifier is in the same process and stays up.
 - **Unsupported methods:** `PUT` and `PATCH` return 501 with an HTML body, not the JSON error shape. The API has no update endpoint by design.
-- **Shared data:** everyone using the hosted URL sees the same bots, and they are wiped whenever the service sleeps or redeploys. Use clearly fake usernames such as `test_<name>_bot`.
+- **Shared data:** everyone using the hosted URL sees the same bots, and they persist. Use clearly fake usernames such as `test_<name>_bot`.
 - **OpenAPI file:** `frontend-openapi.yaml` in the repo, a single file for typed clients and mocks (e.g. openapi-typescript).

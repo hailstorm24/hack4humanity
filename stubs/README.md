@@ -13,6 +13,9 @@ Stdlib-only Python (3.10+, no installs) implementations of the three specs.
 ```
 
 State lives in `data.db` (SQLite, shared by management + runtime). Delete it to reset.
+Set `DATABASE_URL=postgresql://...` to use Postgres instead (needs `pip install -r requirements.txt`). See `store.py`.
+Unit + lifecycle tests (fake Telegram, no network): `python3 -m unittest discover -s ../tests -v` from here, or `-s tests` from the repo root.
+Smoke test any running server: `python3 ../tools/smoke_test.py http://127.0.0.1:8080 --dev-key KEY` (all services in one process via `server.py`).
 Taxonomy: `taxonomy.json`, SemEval 2025 Task 10 URW (11 narratives, 38 sub-narratives).
 
 ## Hosting: Render free tier
@@ -20,7 +23,8 @@ Taxonomy: `taxonomy.json`, SemEval 2025 Task 10 URW (11 narratives, 38 sub-narra
 `/v1/...` (management), `/classifier/v1/...`, `/webhook/{bot_id}` and `/healthz`.
 
 - **Cost:** free. The service sleeps after 15 min with no traffic, and the first request after that takes about 1 minute.
-- **Data is temporary:** SQLite lives on the container's disk and is **wiped on every sleep, restart or deploy**. Treat bots as throwaway test data.
+- **Data:** set `DATABASE_URL` (a Postgres connection string, e.g. Neon's free tier) in the Render dashboard so bots survive sleeps and deploys. Without it, the service falls back to SQLite on the container disk, which Render wipes on every sleep, restart or deploy.
+- **Manager bot:** set `MANAGER_BOT_TOKEN` (from @BotFather) in the dashboard. On startup the service registers the manager's webhook at `/telegram/manager`; check it with `GET /v1/_dev/manager` (`X-Dev-Key` header).
 - **Dev key:** Render generates `DEV_KEY`. Copy it from the service's Environment tab in the dashboard.
 - **Deploys:** `autoDeploy` rebuilds on every push to the connected branch.
 - **Run the same way locally:** `PORT=8080 HOST=127.0.0.1 python3 server.py`
@@ -28,12 +32,20 @@ Taxonomy: `taxonomy.json`, SemEval 2025 Task 10 URW (11 narratives, 38 sub-narra
 `fly.toml` is kept from the earlier Fly.io deploy (which had persistent data, about $2.34/month); it's unused now.
 
 ## What's fake
-- **Classifier**: keyword rules in `classifier.py` (`RULES`), not a model. Replace `score_text()`.
-  Test hooks: text containing `#fail` → 503, `#slow` → 12 s delay.
-- **Telegram creation flow**: `creation_link` is a placeholder. Simulate the organizer confirming with
-  `POST /v1/_dev/bots/{id}/activate` (body `{}` or `{"fail":"username_occupied"}`); it returns the webhook `secret_token`.
-- **Sending**: the runtime logs replies and echoes them as `stub_replies` in the webhook response.
-  `TELEGRAM_SEND=1` plus `{"telegram_token": "..."}` on activate sends for real.
+- **Classifier**: keyword rules in `classifier_rules.json`, not a model (`stub-keywords-0.2`). Replace `score_text()`.
+  Every label in the taxonomy has a rule with Russian and English keywords and a demo sentence in each language;
+  `python3 classifier.py --demo [ru|en]` prints them. Keywords are lower-case and match where a word starts
+  (`ё` = `е`), so a stem like `провоцир` catches every ending. A rule's base score gets +0.03 for each extra keyword
+  hit, capped at 0.97. To add a phrase, append it to the rule's `ru` or `en` list; startup fails if a keyword is
+  used twice or a label isn't in `taxonomy.json`. Known limits: no negation ("это не нацисты" still matches),
+  no Ukrainian. Test hooks: text containing `#fail` → 503, `#slow` → 12 s delay.
+- **Telegram creation flow**: real when `MANAGER_BOT_TOKEN` is set (see `manager.py`): `creation_link` opens the
+  manager bot, which offers a create button, then activates the new bot (token, profile, webhook). Without a token,
+  simulate the organizer confirming with `POST /v1/_dev/bots/{id}/activate` (body `{}` or `{"fail":"username_occupied"}`);
+  it returns the webhook `secret_token`.
+- **Sending**: the runtime sends real replies when the bot has a token (a managed bot, or `{"telegram_token": "..."}`
+  passed to dev activate). Otherwise it only logs them. Replies are always echoed as `stub_replies` in the webhook
+  response. `TELEGRAM_SEND=0` forces log-only.
 
 ## Walkthrough
 ```bash
