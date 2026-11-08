@@ -1,12 +1,18 @@
-"""Bot Management API stub (bot-management-api.yaml) on :8000.
+"""Bot Management API (bot-management-api.yaml) on :8000.
 
-Real: validation, taxonomy checks, soft delete, pending->expired, listing.
-Faked: the Telegram managed-bot flow. `creation_link` is a placeholder; use
-the dev-only endpoint below to simulate the organizer confirming in Telegram.
+Real: validation, taxonomy checks, soft delete (also removes the bot's
+webhook), pending->expired, listing. Telegram creation is real when
+MANAGER_BOT_TOKEN is set: `creation_link` opens the manager bot, which
+creates and activates the bot (see manager.py). The classifier is a stub.
 
-Dev-only (not in the spec):
-  POST /v1/_dev/bots/{bot_id}/activate   body {} or {"fail": "username_occupied"}
+Dev-only test tool (not in the spec), kept on purpose for UI work and the
+smoke test. Real creation never uses it:
+  POST /v1/_dev/bots/{bot_id}/activate   body {} or {"fail": "bot_limit_exceeded"}
        -> activates the bot and returns its webhook `secret_token`, or marks it failed.
+  Needs X-Dev-Key when DEV_KEY is set. With a manager bot configured it is
+  refused unless DEV_KEY is set, and it never touches a bot already linked to
+  a real Telegram bot. Bots it activates don't exist in Telegram (unless given
+  a `telegram_token`) and only log their replies.
 """
 import json
 import re
@@ -218,16 +224,21 @@ def delete_bot(req, m, body):
     row = get_row(m.group(1))
     if row["status"] != "deleted":
         with db() as c:
-            # Real impl: also call deleteWebhook with the bot's token.
             c.execute("UPDATE bots SET status='deleted', deleted_at=?, creation_link=NULL WHERE bot_id=?",
                       (iso(now()), row["bot_id"]))
+        if row["telegram_bot_id"] is not None or row["telegram_token"]:
+            manager.remove_webhook(row)  # best effort; the runtime ignores deleted bots anyway
     return 204, None
 
 
 def dev_activate(req, m, body):
+    if not DEV_KEY and manager.TOKEN:
+        raise HttpError(403, error("invalid_request", "Dev endpoint needs DEV_KEY when a manager bot is configured"))
     if DEV_KEY and not hmac.compare_digest((req.headers.get("X-Dev-Key") or "").encode(), DEV_KEY.encode()):
         raise HttpError(403, error("invalid_request", "Missing or wrong X-Dev-Key"))
     row = get_row(m.group(1))
+    if row["telegram_bot_id"] is not None:
+        raise HttpError(409, error("invalid_request", "Bot is linked to a real Telegram bot; finish it in Telegram"))
     if to_api(row)["status"] != "pending":
         raise HttpError(409, error("invalid_request", f"Bot is {to_api(row)['status']}, not pending"))
     fail = (body or {}).get("fail")

@@ -33,6 +33,18 @@ Stage 5 (activation, right after the match):
 - If the token fetch or setWebhook fails, the bot stays pending (but linked)
   and the organizer is told to open the creation link again, which retries.
 
+Stage 7 (lifecycle):
+- DELETE /v1/bots/{id} calls `remove_webhook`: deleteWebhook with the bot's
+  token (best effort; the runtime ignores deleted bots anyway) and forgets
+  the cached token.
+- A `managed_bot` update for a bot we already linked means its token or
+  owner changed. We forget the cached token, record the (new) owner and
+  username, then: active -> setWebhook again with a fresh token and the same
+  secret; linked pending (not expired) -> retry activation; deleted, expired
+  or failed -> make sure no webhook points at us.
+- Linked pending bots expire like any pending bot: after expires_at, reopening
+  the link says "expired" and no update activates them.
+
 The webhook secret is derived from the token (HMAC), so there is no extra
 secret to configure, and it changes automatically if the token is rotated.
 
@@ -172,8 +184,9 @@ def handle_managed_bot(mb):
     if creator.get("id") is None or tg_bot_id is None:
         return log(f"managed_bot: malformed update {mb!r}")
     with db() as c:
-        if c.execute("SELECT 1 FROM bots WHERE telegram_bot_id=?", (tg_bot_id,)).fetchone():
-            return log(f"managed_bot: @{tg_username} already linked (token/owner change: Stage 7)")
+        known = c.execute("SELECT * FROM bots WHERE telegram_bot_id=?", (tg_bot_id,)).fetchone()
+        if known:
+            return handle_known_bot(known, creator, tg_username)
         candidates = c.execute(
             "SELECT * FROM bots WHERE organizer_tg_id=? AND status='pending' AND telegram_bot_id IS NULL"
             " AND (expires_at IS NULL OR expires_at > ?) ORDER BY claimed_at DESC",
@@ -191,6 +204,56 @@ def handle_managed_bot(mb):
     how = "username" if by_name else "most recent claim"
     log(f"match: @{tg_username} ({tg_bot_id}) -> bot {row['bot_id']} by {how} ({len(candidates)} candidate(s))")
     activate_and_report(row, creator["id"])
+
+
+def handle_known_bot(row, owner, tg_username):
+    """managed_bot update for a bot we already linked: its token or owner changed."""
+    bot_id, tg_id = row["bot_id"], row["telegram_bot_id"]
+    forget_token(tg_id)
+    tg_username = tg_username or row["telegram_username"]
+    changes = []
+    if owner["id"] != row["organizer_tg_id"]:
+        changes.append(f"owner {row['organizer_tg_id']} -> {owner['id']}")
+    if tg_username != row["telegram_username"]:
+        changes.append(f"username @{row['telegram_username']} -> @{tg_username}")
+    with db() as c:
+        c.execute("UPDATE bots SET organizer_tg_id=?, telegram_username=?,"
+                  " telegram_link=CASE WHEN status='active' THEN ? ELSE telegram_link END WHERE bot_id=?",
+                  (owner["id"], tg_username, f"https://t.me/{tg_username}", bot_id))
+        row = c.execute("SELECT * FROM bots WHERE bot_id=?", (bot_id,)).fetchone()
+    log(f"managed_bot: known bot {bot_id} (@{tg_username}, {row['status']}) updated"
+        f"{': ' + ', '.join(changes) if changes else ' (token change)'}")
+    expired = row["expires_at"] is not None and row["expires_at"] < now_iso()
+    if row["status"] == "active":
+        try:
+            telegram.set_webhook(bot_token(row, refresh=True), f"{PUBLIC_URL}/webhook/{bot_id}",
+                                 row["secret_token"], allowed_updates=["message"])
+            log(f"webhook re-set for bot {bot_id}")
+        except telegram.TelegramError as e:
+            log(f"re-setting webhook for bot {bot_id} failed: {e}")
+    elif row["status"] == "pending" and not expired:
+        activate_and_report(row, owner["id"])
+    else:
+        remove_webhook(row)
+
+
+def forget_token(tg_id):
+    with _lock:
+        _bot_tokens.pop(tg_id, None)
+
+
+def remove_webhook(row):
+    """Best effort: stop Telegram delivering this bot's updates to us. Never raises."""
+    try:
+        token = bot_token(row, refresh=True)
+        if token:
+            telegram.delete_webhook(token, drop_pending_updates=True)
+            log(f"webhook removed for bot {row['bot_id']}")
+    except telegram.TelegramError as e:
+        log(f"removing webhook for bot {row['bot_id']} failed: {e}")
+    finally:
+        if row["telegram_bot_id"] is not None:
+            forget_token(row["telegram_bot_id"])
 
 
 def bot_token(row, refresh=False):

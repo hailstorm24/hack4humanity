@@ -150,7 +150,7 @@ Returns a `Bot`. Deleted bots still return 200 with `status: "deleted"`. 404 mea
 
 ### DELETE /v1/bots/{bot_id}
 
-Returns 204 with no body. Calling it again also returns 204. The bot stays readable with `status: "deleted"` and `deleted_at`. Configs cannot be edited: to change replies, create a new bot and delete the old one.
+Returns 204 with no body. Calling it again also returns 204. The bot stops answering at once: its Telegram webhook is removed. The Telegram bot itself still belongs to the organizer, who can delete it in BotFather. The bot stays readable with `status: "deleted"` and `deleted_at`. Configs cannot be edited: to change replies, create a new bot and delete the old one.
 
 ## Schemas
 
@@ -251,7 +251,7 @@ Every error body has the same shape. On a 422, show each `details` item next to 
 
 The hosted API is still partly a stub (keyword classifier, a dev-only endpoint). These differences go away with the real backend; nothing else in this contract changes.
 
-- **Activating a bot without Telegram:** opening `creation_link` creates a real Telegram bot. To move a bot from `pending` to `active` without that while building the UI, call the dev-only endpoint below. It needs an `X-Dev-Key` header; ask Hailey for the key. Never call it from shipped UI code. Bots activated this way don't exist in Telegram.
+- **Activating a bot without Telegram:** opening `creation_link` creates a real Telegram bot. To move a bot from `pending` to `active` without that while building the UI, call the dev-only endpoint below. It needs an `X-Dev-Key` header; ask Hailey for the key. Never call it from shipped UI code. Bots activated this way don't exist in Telegram. It returns 409 for a bot that's already linked to a real Telegram bot.
 
 ```bash
 curl -X POST https://h4h-narrative-stubs.onrender.com/v1/_dev/bots/$BOT_ID/activate \
