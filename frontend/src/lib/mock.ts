@@ -1,17 +1,13 @@
 // In-browser stand-in for the Bot Management API. Used only when
 // NEXT_PUBLIC_API_BASE_URL is not set. State lives in sessionStorage.
 import taxonomy from "./taxonomy.json";
+import { DEFAULT_MESSAGES } from "./defaults";
 import type { Bot, BotConfig, BotList, Taxonomy } from "@/types/api";
 
 const KEY = "narrative-bots:mock:v1";
 const HOUR = 3_600_000;
 
-export const DEFAULTS = {
-  start_message: "Перешлите мне сообщение, и я проверю его.",
-  non_text_message: "Пожалуйста, перешлите текстовое сообщение или пост с подписью.",
-  error_message: "Сейчас не удаётся проверить сообщение. Попробуйте позже.",
-  other_response: "Мы не нашли известного нарратива.",
-};
+export const DEFAULTS = DEFAULT_MESSAGES;
 
 const iso = (ms: number) => new Date(ms).toISOString().replace(/\.\d+Z$/, "Z");
 const uuid = () =>

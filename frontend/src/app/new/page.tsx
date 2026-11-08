@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { ApiError, IS_MOCK, api } from "@/lib/api";
-import { DEFAULTS } from "@/lib/mock";
+import { DEFAULT_MESSAGES as DEFAULTS, DEFAULT_REPLIES } from "@/lib/defaults";
 import { describeError } from "@/lib/errors";
 import type { Bot, BotConfig, Taxonomy } from "@/types/api";
 
@@ -34,9 +34,18 @@ const example = (): Draft => ({
   error_message: DEFAULTS.error_message,
   confidence_threshold: 0.6,
   other_response: DEFAULTS.other_response,
-  replies: { "0.1": "Утверждения о «провокации НАТО» — частый приём.", "2": "Утверждение выставляет агрессора жертвой." },
-  subs: ["0.1"],
+  replies: {},
+  subs: [],
 });
+
+/** Fill every narrative that has no reply yet with its Russian default. Sub-narratives inherit the narrative reply. */
+function withDefaults(d: Draft, tax: Taxonomy): Draft {
+  const replies = { ...d.replies };
+  tax.narratives.forEach((n, ni) => {
+    if (!(replies[ni] ?? "").trim() && DEFAULT_REPLIES[n.name]) replies[ni] = DEFAULT_REPLIES[n.name];
+  });
+  return { ...d, replies };
+}
 
 const ISSUE: Record<string, string> = {
   required: "This field is required.",
@@ -187,7 +196,7 @@ export default function NewBot() {
   const [replyErrors, setReplyErrors] = useState<Record<string, string>>({});
 
   const loadTax = () => {
-    api.taxonomy().then((t) => { setTax(t); setTaxErr(null); }, (e: unknown) => setTaxErr(e instanceof ApiError && e.status === 503 ? "The narrative list is temporarily unavailable." : "Couldn’t load the narrative list."));
+    api.taxonomy().then((t) => { setTax(t); setD((p) => withDefaults(p, t)); setTaxErr(null); }, (e: unknown) => setTaxErr(e instanceof ApiError && e.status === 503 ? "The narrative list is temporarily unavailable." : "Couldn’t load the narrative list."));
   };
   useEffect(loadTax, []);
 
@@ -276,7 +285,7 @@ export default function NewBot() {
       <div className="page-head">
         <div>
           <h1 className="h1">New bot</h1>
-          <p>The values below are an example so you can see how it works. Replace them with your own.</p>
+          <p>Every narrative starts with a ready-made reply in Russian. Edit any of them, or clear one to skip that narrative.</p>
         </div>
       </div>
 
@@ -441,7 +450,7 @@ export default function NewBot() {
               <button className="btn primary" type="submit" disabled={busy || !tax}>
                 {busy ? "Creating…" : "Create bot"}
               </button>
-              <button className="btn" type="button" onClick={() => { setD(example()); setErrors({}); setServerErr(null); }}>
+              <button className="btn" type="button" onClick={() => { setD(tax ? withDefaults(example(), tax) : example()); setErrors({}); setServerErr(null); }}>
                 Reset to example
               </button>
             </div>
