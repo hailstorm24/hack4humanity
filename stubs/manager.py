@@ -17,9 +17,21 @@ Stage 4:
   bot is pending.
 - A `managed_bot` update is matched to the creator's claimed pending bot:
   the one whose config.username equals the new bot's username, else the most
-  recently claimed. The match stores telegram_bot_id + telegram_username; the
-  bot stays `pending` until Stage 5 activates it. Updates for a bot that is
-  already linked (token or owner changes) are left for Stage 7.
+  recently claimed. The match stores telegram_bot_id + telegram_username.
+  Updates for a bot that is already linked (token or owner changes) are left
+  for Stage 7.
+
+Stage 5 (activation, right after the match):
+- getManagedBotToken fetches the new bot's token. Tokens are cached in memory
+  only (`bot_token`), never stored; the runtime re-fetches after a restart or
+  a 401.
+- Profile: setMyName / setMyDescription / setMyShortDescription from config.
+  Failures here are logged, not fatal.
+- setWebhook to {PUBLIC_URL}/webhook/<bot_id> with a fresh per-bot secret and
+  allowed_updates ["message"]; then the bot becomes `active` and the organizer
+  gets its t.me link.
+- If the token fetch or setWebhook fails, the bot stays pending (but linked)
+  and the organizer is told to open the creation link again, which retries.
 
 The webhook secret is derived from the token (HMAC), so there is no extra
 secret to configure, and it changes automatically if the token is rotated.
@@ -33,6 +45,7 @@ import hmac
 import json
 import os
 import re
+import secrets
 import sys
 import threading
 from datetime import datetime, timezone
@@ -53,7 +66,10 @@ TEXT = {
     "create": ("Нажмите кнопку ниже, чтобы создать бота «{name}». "
                "Telegram покажет предложенные имя и адрес — их можно изменить."),
     "button": "Создать бота",
-    "linked": "Бот @{username} создан. Завершаю настройку…",
+    "ready": ("Готово! Бот @{username} работает: {link}\n"
+              "Перешлите ему сообщение, чтобы проверить его."),
+    "activation_failed": ("Бот @{username} создан, но настройку завершить не удалось. "
+                          "Откройте ссылку из панели организатора ещё раз, чтобы повторить."),
     "unmatched": ("Бот @{username} создан, но я не нашёл ожидающей заявки. "
                   "Откройте ссылку из панели организатора и создайте бота через кнопку."),
 }
@@ -61,6 +77,7 @@ TEXT = {
 _state = {"username": os.environ.get("MANAGER_BOT_USERNAME", "STUB_MANAGER_bot"),
           "can_manage_bots": None, "webhook_set": False, "startup_error": None}
 _lock = threading.Lock()
+_bot_tokens = {}  # telegram_bot_id -> managed bot token (memory only; see bot_token)
 
 
 def log(msg):
@@ -133,10 +150,13 @@ def handle_start(msg, payload):
             return reply(chat_id, TEXT["active"].format(link=row["telegram_link"]))
         if row["status"] == "expired" or (row["expires_at"] and row["expires_at"] < now_iso()):
             return reply(chat_id, TEXT["expired"])
-        if row["telegram_bot_id"] is not None:
-            return reply(chat_id, TEXT["linked"].format(username=row["telegram_username"]))
-        c.execute("UPDATE bots SET organizer_tg_id=?, claimed_at=? WHERE bot_id=? AND status='pending'",
-                  (user_id, now_iso(), bot_id))
+        linked = row["telegram_bot_id"] is not None
+        if not linked:
+            c.execute("UPDATE bots SET organizer_tg_id=?, claimed_at=? WHERE bot_id=? AND status='pending'",
+                      (user_id, now_iso(), bot_id))
+    if linked:  # created in Telegram, but activation failed earlier: retry it
+        log(f"retry activation: bot {bot_id} by tg user {user_id}")
+        return activate_and_report(row, chat_id)
     cfg = json.loads(row["config"])
     log(f"claim: bot {bot_id} by tg user {user_id}")
     keyboard = telegram.request_managed_bot_keyboard(
@@ -166,10 +186,66 @@ def handle_managed_bot(mb):
         row = (by_name or candidates)[0]
         c.execute("UPDATE bots SET telegram_bot_id=?, telegram_username=? WHERE bot_id=? AND status='pending'",
                   (tg_bot_id, tg_username, row["bot_id"]))
+        row = c.execute("SELECT * FROM bots WHERE bot_id=?", (row["bot_id"],)).fetchone()
     how = "username" if by_name else "most recent claim"
-    log(f"match: @{tg_username} ({tg_bot_id}) -> bot {row['bot_id']} by {how}"
-        f" ({len(candidates)} candidate(s)); activation is Stage 5")
-    reply(creator["id"], TEXT["linked"].format(username=tg_username), {"remove_keyboard": True})
+    log(f"match: @{tg_username} ({tg_bot_id}) -> bot {row['bot_id']} by {how} ({len(candidates)} candidate(s))")
+    activate_and_report(row, creator["id"])
+
+
+def bot_token(row, refresh=False):
+    """Token for a bot row, or None if we can't get one.
+
+    Dev-activated bots carry `telegram_token`. Real ones are fetched with
+    getManagedBotToken and cached in memory; pass refresh=True after a 401.
+    Raises TelegramError if the fetch fails.
+    """
+    if row["telegram_token"]:
+        return row["telegram_token"]
+    tg_id = row["telegram_bot_id"]
+    if tg_id is None or not TOKEN:
+        return None
+    with _lock:
+        token = None if refresh else _bot_tokens.get(tg_id)
+    if token is None:
+        token = telegram.get_managed_bot_token(TOKEN, tg_id)
+        with _lock:
+            _bot_tokens[tg_id] = token
+    return token
+
+
+def activate(row):
+    """Token, profile, webhook, then mark active. Returns the t.me link; raises TelegramError
+    (or RuntimeError if PUBLIC_URL is unknown) and leaves the bot pending on failure."""
+    if not PUBLIC_URL:
+        raise RuntimeError("PUBLIC_URL unknown; can't set the bot's webhook")
+    bot_id, cfg = row["bot_id"], json.loads(row["config"])
+    token = bot_token(row, refresh=True)  # always fresh here: activation is rare
+    for call, value in ((telegram.set_my_name, cfg.get("display_name")),
+                        (telegram.set_my_description, cfg.get("description")),
+                        (telegram.set_my_short_description, cfg.get("short_description"))):
+        if value:
+            try:
+                call(token, value)
+            except telegram.TelegramError as e:
+                log(f"activate {bot_id}: profile step failed (continuing): {e}")
+    secret = secrets.token_urlsafe(32)
+    telegram.set_webhook(token, f"{PUBLIC_URL}/webhook/{bot_id}", secret, allowed_updates=["message"])
+    link = f"https://t.me/{row['telegram_username']}"
+    with db() as c:
+        c.execute("UPDATE bots SET status='active', secret_token=?, telegram_link=? WHERE bot_id=? AND status='pending'",
+                  (secret, link, bot_id))
+    log(f"activated: bot {bot_id} as @{row['telegram_username']}")
+    return link
+
+
+def activate_and_report(row, chat_id):
+    username = row["telegram_username"]
+    try:
+        link = activate(row)
+    except (telegram.TelegramError, RuntimeError) as e:
+        log(f"activate {row['bot_id']} failed: {e}")
+        return reply(chat_id, TEXT["activation_failed"].format(username=username), {"remove_keyboard": True})
+    reply(chat_id, TEXT["ready"].format(username=username, link=link), {"remove_keyboard": True})
 
 
 def handle_update(req, m, update):

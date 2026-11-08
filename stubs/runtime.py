@@ -6,14 +6,16 @@ faked by default: replies are logged and echoed in the 200 response body
 test with curl.
 
 Set TELEGRAM_SEND=1 to really call sendMessage (via telegram.py, so
-TELEGRAM_API_BASE can point at a fake), using the `telegram_token` passed to
-the dev activate endpoint.
+TELEGRAM_API_BASE can point at a fake). The bot's token comes from
+manager.bot_token: the `telegram_token` passed to the dev activate endpoint,
+or else getManagedBotToken (cached in memory, re-fetched once after a 401).
 """
 import hmac
 import json
 import os
 import sys
 
+import manager
 import telegram
 from common import CLASSIFIER_URL, db, http_json, init_db, serve
 
@@ -51,10 +53,17 @@ def resolve_replies(cfg, labels):
 
 
 def send(row, chat_id, reply_to, text):
-    if not (TELEGRAM_SEND and row["telegram_token"]):
+    token = manager.bot_token(row) if TELEGRAM_SEND else None
+    if not token:
         log(f"(fake send) chat={chat_id} reply_to={reply_to}: {text[:80]!r}")
         return
-    telegram.send_message(row["telegram_token"], chat_id, text, reply_to_message_id=reply_to)
+    try:
+        telegram.send_message(token, chat_id, text, reply_to_message_id=reply_to)
+    except telegram.TelegramError as e:
+        if e.code != 401 or row["telegram_token"]:
+            raise
+        # Cached token went stale (rotated in BotFather?): fetch a fresh one and retry once.
+        telegram.send_message(manager.bot_token(row, refresh=True), chat_id, text, reply_to_message_id=reply_to)
 
 
 def webhook(req, m, update):

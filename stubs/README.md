@@ -34,10 +34,12 @@ Taxonomy: `taxonomy.json`, SemEval 2025 Task 10 URW (11 narratives, 38 sub-narra
 ## What's fake
 - **Classifier**: keyword rules in `classifier.py` (`RULES`), not a model. Replace `score_text()`.
   Test hooks: text containing `#fail` → 503, `#slow` → 12 s delay.
-- **Telegram creation flow**: `creation_link` is a placeholder. Simulate the organizer confirming with
-  `POST /v1/_dev/bots/{id}/activate` (body `{}` or `{"fail":"username_occupied"}`); it returns the webhook `secret_token`.
+- **Telegram creation flow**: real when `MANAGER_BOT_TOKEN` is set (see `manager.py`): `creation_link` opens the
+  manager bot, which offers a create button, then activates the new bot (token, profile, webhook). Without a token,
+  simulate the organizer confirming with `POST /v1/_dev/bots/{id}/activate` (body `{}` or `{"fail":"username_occupied"}`);
+  it returns the webhook `secret_token`.
 - **Sending**: the runtime logs replies and echoes them as `stub_replies` in the webhook response.
-  `TELEGRAM_SEND=1` plus `{"telegram_token": "..."}` on activate sends for real.
+  `TELEGRAM_SEND=1` sends for real, with the managed bot's token (or `{"telegram_token": "..."}` passed to dev activate).
 
 ## Walkthrough
 ```bash
