@@ -15,19 +15,17 @@ Stdlib-only Python (3.10+, no installs) implementations of the three specs.
 State lives in `data.db` (SQLite, shared by management + runtime). Delete it to reset.
 Taxonomy: `taxonomy.json`, SemEval 2025 Task 10 URW (11 narratives, 38 sub-narratives).
 
-## Hosted (Fly.io)
-Base URL: https://h4h-narrative-stubs.fly.dev. All three services run in one process (`server.py`):
+## Hosting: Render free tier
+`../render.yaml` (a Render Blueprint) deploys `server.py`, which runs all three services in one process:
+`/v1/...` (management), `/classifier/v1/...`, `/webhook/{bot_id}` and `/healthz`.
 
-| Path | Service |
-|---|---|
-| `/v1/...` | Bot Management |
-| `/classifier/v1/...` | Classifier |
-| `/webhook/{bot_id}` | Bot Runtime |
+- **Cost:** free. The service sleeps after 15 min with no traffic, and the first request after that takes about 1 minute.
+- **Data is temporary:** SQLite lives on the container's disk and is **wiped on every sleep, restart or deploy**. Treat bots as throwaway test data.
+- **Dev key:** Render generates `DEV_KEY`. Copy it from the service's Environment tab in the dashboard.
+- **Deploys:** `autoDeploy` rebuilds on every push to the connected branch.
+- **Run the same way locally:** `PORT=8080 HOST=127.0.0.1 python3 server.py`
 
-- One machine in `ams` with a 1 GB volume at `/data` (SQLite). Keep it to one machine, since SQLite can't be shared.
-- The `/v1/_dev/...` endpoints need header `X-Dev-Key: $(cat .dev_key)`. The key is a Fly secret.
-- To redeploy: `fly deploy --local-only --ha=false`. Fly's remote builder returned 401 errors on this app, so build with local Docker.
-- Run locally as one process: `PORT=8080 HOST=127.0.0.1 python3 server.py`, or as three with `./run.sh`.
+`fly.toml` is kept from the earlier Fly.io deploy (which had persistent data, about $2.34/month); it's unused now.
 
 ## What's fake
 - **Classifier**: keyword rules in `classifier.py` (`RULES`), not a model. Replace `score_text()`.

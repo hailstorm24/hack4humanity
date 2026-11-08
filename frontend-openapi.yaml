@@ -24,8 +24,8 @@ info:
     \ Note that `GET /bots` therefore lists every\nbot; once auth exists it must be scoped to the caller.\n\
     \nGenerated from bot-management-api.yaml + common.yaml; edit those, not this file.\n"
 servers:
-- url: https://h4h-narrative-stubs.fly.dev/v1
-  description: Hosted stub
+- url: https://h4h-narrative-stubs.onrender.com/v1
+  description: Hosted stub (Render free tier; sleeps when idle, data wiped on sleep)
 - url: http://127.0.0.1:8000/v1
   description: Local stub (stubs/run.sh)
 paths:

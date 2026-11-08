@@ -1,0 +1,15 @@
+# Render Blueprint: free web service running all three stubs in one process (stubs/server.py).
+# Free tier: sleeps after 15 min idle (~1 min cold start); SQLite is wiped on every restart/deploy/sleep.
+services:
+  - type: web
+    name: h4h-narrative-stubs
+    runtime: docker
+    plan: free
+    region: frankfurt
+    dockerfilePath: ./stubs/Dockerfile
+    dockerContext: ./stubs
+    healthCheckPath: /healthz
+    autoDeploy: true
+    envVars:
+      - key: DEV_KEY          # header X-Dev-Key for /v1/_dev/... ; read it in the Render dashboard
+        generateValue: true
