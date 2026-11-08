@@ -32,8 +32,13 @@ Taxonomy: `taxonomy.json`, SemEval 2025 Task 10 URW (11 narratives, 38 sub-narra
 `fly.toml` is kept from the earlier Fly.io deploy (which had persistent data, about $2.34/month); it's unused now.
 
 ## What's fake
-- **Classifier**: keyword rules in `classifier.py` (`RULES`), not a model. Replace `score_text()`.
-  Test hooks: text containing `#fail` → 503, `#slow` → 12 s delay.
+- **Classifier**: keyword rules in `classifier_rules.json`, not a model (`stub-keywords-0.2`). Replace `score_text()`.
+  Every label in the taxonomy has a rule with Russian and English keywords and a demo sentence in each language;
+  `python3 classifier.py --demo [ru|en]` prints them. Keywords are lower-case and match where a word starts
+  (`ё` = `е`), so a stem like `провоцир` catches every ending. A rule's base score gets +0.03 for each extra keyword
+  hit, capped at 0.97. To add a phrase, append it to the rule's `ru` or `en` list; startup fails if a keyword is
+  used twice or a label isn't in `taxonomy.json`. Known limits: no negation ("это не нацисты" still matches),
+  no Ukrainian. Test hooks: text containing `#fail` → 503, `#slow` → 12 s delay.
 - **Telegram creation flow**: real when `MANAGER_BOT_TOKEN` is set (see `manager.py`): `creation_link` opens the
   manager bot, which offers a create button, then activates the new bot (token, profile, webhook). Without a token,
   simulate the organizer confirming with `POST /v1/_dev/bots/{id}/activate` (body `{}` or `{"fail":"username_occupied"}`);
