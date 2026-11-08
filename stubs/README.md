@@ -14,6 +14,7 @@ Stdlib-only Python (3.10+, no installs) implementations of the three specs.
 
 State lives in `data.db` (SQLite, shared by management + runtime). Delete it to reset.
 Set `DATABASE_URL=postgresql://...` to use Postgres instead (needs `pip install -r requirements.txt`). See `store.py`.
+Unit + lifecycle tests (fake Telegram, no network): `python3 -m unittest discover -s ../tests -v` from here, or `-s tests` from the repo root.
 Smoke test any running server: `python3 ../tools/smoke_test.py http://127.0.0.1:8080 --dev-key KEY` (all services in one process via `server.py`).
 Taxonomy: `taxonomy.json`, SemEval 2025 Task 10 URW (11 narratives, 38 sub-narratives).
 
