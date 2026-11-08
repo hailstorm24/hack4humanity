@@ -1,12 +1,12 @@
 import type { Metadata, Viewport } from "next";
-import { Golos_Text, IBM_Plex_Mono, Source_Serif_4 } from "next/font/google";
+import { Geologica, Onest } from "next/font/google";
 import "./globals.css";
 import { Masthead } from "@/components/Masthead";
 import { ToastHost } from "@/components/Toast";
+import { WakingBanner } from "@/components/WakingBanner";
 
-const serif = Source_Serif_4({ variable: "--font-serif", subsets: ["latin", "cyrillic"], style: ["normal", "italic"], display: "swap" });
-const sans = Golos_Text({ variable: "--font-sans", subsets: ["latin", "cyrillic"], display: "swap" });
-const mono = IBM_Plex_Mono({ variable: "--font-mono", subsets: ["latin", "cyrillic"], weight: ["400", "500"], display: "swap" });
+const display = Geologica({ variable: "--font-display", subsets: ["latin", "cyrillic"], display: "swap" });
+const text = Onest({ variable: "--font-text", subsets: ["latin", "cyrillic"], display: "swap" });
 
 export const metadata: Metadata = {
   title: "Narrative Bots",
@@ -16,16 +16,21 @@ export const viewport: Viewport = { width: "device-width", initialScale: 1, view
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en" className={`${serif.variable} ${sans.variable} ${mono.variable}`}>
-      <body>
-        <div className="page">
-          <Masthead />
-          <main id="main">{children}</main>
-          <footer className="foot">
+    <html lang="en" suppressHydrationWarning className={`${display.variable} ${text.variable}`}>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: "try{var t=localStorage.getItem('nb-theme');if(t)document.documentElement.dataset.theme=t}catch(e){}" }} />
+      </head>
+      <body suppressHydrationWarning>
+        <a className="skip-link" href="#main">Skip to content</a>
+        <Masthead />
+        <WakingBanner />
+        <main id="main">{children}</main>
+        <footer className="foot">
+          <div className="wrap">
             <span>Narrative taxonomy: SemEval 2025 Task 10</span>
             <span>Hack4Humanity prototype</span>
-          </footer>
-        </div>
+          </div>
+        </footer>
         <ToastHost />
       </body>
     </html>

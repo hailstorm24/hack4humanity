@@ -16,23 +16,54 @@ export class ApiError extends Error {
   }
 }
 
+// The hosted API sleeps when idle, so the first request can take about a minute.
+const TIMEOUT_MS = 90_000;
+const WAKING_AFTER_MS = 4_000;
+let inflightSlow = 0;
+const setWaking = (delta: number) => {
+  inflightSlow += delta;
+  window.dispatchEvent(new CustomEvent("nb-waking", { detail: inflightSlow > 0 }));
+};
+
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
+  const ctl = new AbortController();
+  const killer = setTimeout(() => ctl.abort(), TIMEOUT_MS);
+  let slow = false;
+  const slowTimer = setTimeout(() => {
+    slow = true;
+    setWaking(1);
+  }, WAKING_AFTER_MS);
+  const done = () => {
+    clearTimeout(killer);
+    clearTimeout(slowTimer);
+    if (slow) setWaking(-1);
+  };
   let res: Response;
   try {
     res = await fetch(BASE + path, {
       ...init,
+      signal: ctl.signal,
       headers: { ...(init?.body ? { "Content-Type": "application/json" } : {}), ...init?.headers },
     });
   } catch {
-    throw new ApiError(0, { error: "network", message: "Can’t reach the server. Check your connection and try again." });
+    done();
+    throw new ApiError(0, ctl.signal.aborted
+      ? { error: "internal", message: "The server took too long to answer. Try again." }
+      : { error: "internal", message: "Can’t reach the server. Check your connection and try again." });
   }
+  done();
   if (res.status === 204) return undefined as T;
   const text = await res.text();
   let json: unknown = null;
   try {
     json = text ? JSON.parse(text) : null;
   } catch {}
-  if (!res.ok) throw new ApiError(res.status, (json as ApiErrorBody) ?? null);
+  if (!res.ok) {
+    const body = (json as ApiErrorBody) ?? null;
+    // invalid_request means the page sent something the contract forbids: a bug on our side.
+    if (body?.error === "invalid_request") console.error("API invalid_request", path, body);
+    throw new ApiError(res.status, body);
+  }
   return json as T;
 }
 

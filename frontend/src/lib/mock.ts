@@ -39,10 +39,13 @@ function make(created: number, status: Bot["status"], config: Partial<BotConfig>
     ...extra,
   };
   if (status === "pending") {
-    bot.creation_link = `https://t.me/newbot/STUB_MANAGER_bot/${cfg.username}?name=${id}`;
+    bot.creation_link = `https://t.me/h4h_manager_bot?start=${id}`;
     bot.expires_at = iso(created + 24 * HOUR);
   }
-  if (status === "active") bot.telegram_link = `https://t.me/${cfg.username}`;
+  if (status === "active") {
+    bot.telegram_username = cfg.username;
+    bot.telegram_link = `https://t.me/${cfg.username}`;
+  }
   return bot;
 }
 
@@ -70,7 +73,7 @@ function seed(): Bot[] {
         r(1, 4, "Это переписанная история: вот проверенные факты."),
       ],
     }),
-    make(now - 72 * HOUR, "failed", { display_name: "Lviv Check", username: "lviv_check_bot" }, { failure_reason: "username_occupied" }),
+    make(now - 72 * HOUR, "failed", { display_name: "Lviv Check", username: "lviv_check_bot" }, { failure_reason: "bot_limit_exceeded" }),
     make(
       now - 120 * HOUR,
       "deleted",
@@ -135,22 +138,24 @@ export const mock = {
       delete b.creation_link;
       delete b.expires_at;
       delete b.telegram_link;
+      delete b.telegram_username;
       save(bots);
     }
   },
   /** Stand-ins for what Telegram and the server do. Mock mode only. */
-  simulate: async (id: string, outcome: "confirm" | "occupied" | "expire") => {
+  simulate: async (id: string, outcome: "confirm" | "limit" | "expire") => {
     const bots = load();
     const b = bots.find((x) => x.bot_id === id);
     if (!b || b.status !== "pending") return;
     if (outcome === "confirm") {
       b.status = "active";
+      b.telegram_username = b.config.username;
       b.telegram_link = `https://t.me/${b.config.username}`;
       delete b.creation_link;
       delete b.expires_at;
-    } else if (outcome === "occupied") {
+    } else if (outcome === "limit") {
       b.status = "failed";
-      b.failure_reason = "username_occupied";
+      b.failure_reason = "bot_limit_exceeded";
       delete b.creation_link;
       delete b.expires_at;
     } else {
