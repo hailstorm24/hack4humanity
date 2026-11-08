@@ -5,8 +5,8 @@ TELEGRAM_SEND=1 and a throwaway SQLite file. The fake plays Telegram: it
 delivers updates to the service's webhooks and records what the service sends.
 
 Steps that later stages build are skipped tests named after their stage. As
-each stage lands, its skip is removed and the dev-activate shortcut in
-`_activate_via_dev_endpoint` shrinks until it's gone (Stage 5).
+each stage lands, its skip is removed. Since Stage 5, active bots are made the
+real way: /start link -> create in Telegram -> managed_bot update -> activation.
 
     python3 -m unittest discover -s tests -v
 """
@@ -105,18 +105,6 @@ class LifecycleTest(unittest.TestCase):
             raw = e.read()
             return e.code, (json.loads(raw) if raw else None)
 
-    def _activate_via_dev_endpoint(self, bot_id, username):
-        """Stand-in for Stages 3-5: make a managed bot in the fake, activate via the dev endpoint,
-        and set its webhook the way Stage 5's activation will."""
-        token = self.fake.add_bot(username, CONFIG["display_name"],
-                                  manager_id=self.fake.bot(self.manager)["id"])
-        status, act = self.api("POST", f"/v1/_dev/bots/{bot_id}/activate",
-                               {"telegram_token": token, "telegram_username": username},
-                               {"X-Dev-Key": DEV_KEY})
-        self.assertEqual(status, 200, act)
-        telegram.set_webhook(token, act["webhook_url"], act["secret_token"], allowed_updates=["message"])
-        return token
-
     def db(self):
         return sqlite3.connect(os.path.join(self.tmp.name, "test.db"))
 
@@ -136,9 +124,14 @@ class LifecycleTest(unittest.TestCase):
         return self.fake.sent_to(org["id"])[-1]
 
     def _new_active_bot(self, username):
-        status, bot = self.api("POST", "/v1/bots", {**CONFIG, "username": username})
-        self.assertEqual(status, 201, bot)
-        return bot, self._activate_via_dev_endpoint(bot["bot_id"], username)
+        """Full real flow; returns (Bot as the API reports it, the new bot's token)."""
+        org, bot_id = new_organizer(), self._pending(username=username)
+        self._start(org, bot_id)
+        token, responses = self.fake.create_managed_bot(self.manager, org, username, CONFIG["display_name"])
+        self.assertEqual([r[0] for r in responses], [200, 200])
+        status, bot = self.api("GET", f"/v1/bots/{bot_id}")
+        self.assertEqual(bot["status"], "active", bot)
+        return bot, token
 
     # --- Stage 1-2: what exists today -------------------------------------------
 
@@ -270,7 +263,7 @@ class LifecycleTest(unittest.TestCase):
         self.api("DELETE", f"/v1/bots/{deleted}")
         self.assertIn("недействительна", self._start(org, deleted)["text"])
         for bot_id in (expired, active["bot_id"], deleted):
-            self.assertIsNone(self._row(bot_id)["organizer_tg_id"])
+            self.assertNotEqual(self._row(bot_id)["organizer_tg_id"], org["id"])
 
     def test_stage4_managed_bot_matched_to_claim(self):
         org, bot_id = new_organizer(), self._pending()
@@ -279,7 +272,7 @@ class LifecycleTest(unittest.TestCase):
         self.assertEqual([r[0] for r in responses], [200, 200])
         row = self._row(bot_id)
         self.assertEqual(row["telegram_bot_id"], self.fake.bot(CONFIG["username"])["id"])
-        self.assertEqual((row["telegram_username"], row["status"]), (CONFIG["username"], "pending"))
+        self.assertEqual((row["telegram_username"], row["status"]), (CONFIG["username"], "active"))
         sent = self.fake.sent_to(org["id"])[-1]
         self.assertIn("@" + CONFIG["username"], sent["text"])
         self.assertEqual(sent["reply_markup"], {"remove_keyboard": True})
@@ -319,13 +312,8 @@ class LifecycleTest(unittest.TestCase):
         self.assertEqual(len(self.fake.sent_to(org["id"])), before)
         self.assertEqual(self._row(bot_id)["telegram_username"], "repeat_test_bot")
 
-    def test_stage4_reopening_link_after_link_reports_progress(self):
-        org, bot_id = new_organizer(), self._pending()
-        self._start(org, bot_id)
-        self.fake.create_managed_bot(self.manager, org, "progress_test_bot", "Prog")
-        self.assertIn("@progress_test_bot", self._start(org, bot_id)["text"])
+    # --- Stage 5: activation ------------------------------------------------------
 
-    @unittest.skip("Stage 5: managed_bot update activates the bot without the dev endpoint")
     def test_stage5_managed_bot_update_activates(self):
         org = new_organizer()
         status, bot = self.api("POST", "/v1/bots", CONFIG)
@@ -334,9 +322,57 @@ class LifecycleTest(unittest.TestCase):
         status, got = self.api("GET", f"/v1/bots/{bot['bot_id']}")
         self.assertEqual(got["status"], "active")
         self.assertEqual(got["telegram_username"], "renamed_by_organizer_bot")
+        self.assertEqual(got["telegram_link"], "https://t.me/renamed_by_organizer_bot")
         live = self.fake.bot(token)
-        self.assertEqual((live["name"], live["description"]), (CONFIG["display_name"], CONFIG["description"]))
+        self.assertEqual((live["name"], live["description"], live["short_description"]),
+                         (CONFIG["display_name"], CONFIG["description"], CONFIG["short_description"]))
         self.assertTrue(live["webhook"]["url"].endswith(f"/webhook/{bot['bot_id']}"))
+        self.assertEqual(live["webhook"]["allowed_updates"], ["message"])
+        row = self._row(bot["bot_id"])
+        self.assertEqual(live["webhook"]["secret_token"], row["secret_token"])
+        self.assertIsNone(row["telegram_token"])  # tokens are never stored
+        self.assertNotIn(token, json.dumps(got))
+        self.assertIn("t.me/renamed_by_organizer_bot", self.fake.sent_to(org["id"])[-1]["text"])
+        # And it answers readers.
+        self.fake.user_sends(token, READER, text="НАТО провоцировало Россию")
+        self.assertEqual(self.fake.sent_to(READER["id"])[-1]["text"], "BLAME")
+
+    def test_stage5_webhook_failure_stays_pending_and_reopening_retries(self):
+        org, bot_id = new_organizer(), self._pending(username="retry_test_bot")
+        self._start(org, bot_id)
+        self.fake.inject_error("setWebhook", 500, "Internal Server Error")
+        token, responses = self.fake.create_managed_bot(self.manager, org, "retry_test_bot", "Retry")
+        self.assertEqual([r[0] for r in responses], [200, 200])
+        self.assertEqual(self.api("GET", f"/v1/bots/{bot_id}")[1]["status"], "pending")
+        self.assertIn("не удалось", self.fake.sent_to(org["id"])[-1]["text"])
+        self.assertIsNone(self.fake.bot(token)["webhook"])
+        sent = self._start(org, bot_id)  # reopening the creation link retries activation
+        self.assertIn("t.me/retry_test_bot", sent["text"])
+        self.assertEqual(self.api("GET", f"/v1/bots/{bot_id}")[1]["status"], "active")
+        self.assertIsNotNone(self.fake.bot(token)["webhook"])
+
+    def test_stage5_token_fetch_failure_stays_pending(self):
+        org, bot_id = new_organizer(), self._pending(username="notoken_test_bot")
+        self._start(org, bot_id)
+        self.fake.inject_error("getManagedBotToken", 400, "Bad Request: bot not found")
+        self.fake.create_managed_bot(self.manager, org, "notoken_test_bot", "NoTok")
+        self.assertEqual(self.api("GET", f"/v1/bots/{bot_id}")[1]["status"], "pending")
+        self.assertIn("не удалось", self.fake.sent_to(org["id"])[-1]["text"])
+
+    def test_stage5_profile_failure_is_not_fatal(self):
+        self.fake.inject_error("setMyDescription", 400, "Bad Request: description is too long")
+        bot, token = self._new_active_bot("profile_fail_test_bot")
+        self.assertEqual(self.fake.bot(token)["name"], CONFIG["display_name"])
+
+    def test_stage5_runtime_refetches_rotated_token(self):
+        bot, token = self._new_active_bot("rotate_test_bot")
+        self.fake.user_sends(token, READER, text="Хорошая погода")  # warms the token cache
+        bot_tg_id = self.fake.bot(token)["id"]
+        new_token = telegram.replace_managed_bot_token(self.manager, bot_tg_id)  # old token now 401s
+        status, _ = self.fake.user_sends(new_token, READER, text="НАТО провоцировало Россию")
+        self.assertEqual(status, 200)
+        sent = self.fake.sent_to(READER["id"])[-1]
+        self.assertEqual((sent["bot"], sent["text"]), ("rotate_test_bot", "BLAME"))
 
     @unittest.skip("Stage 7: DELETE calls deleteWebhook")
     def test_stage7_delete_removes_webhook(self):

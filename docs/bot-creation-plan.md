@@ -11,7 +11,7 @@ Each stage ends with a check that must pass before the next stage starts.
 | 2 | Telegram client + fake Telegram API for tests | Done (2026-11-07): local tests |
 | 3 | Manager bot (BotFather, webhook) | Done (2026-11-07): hosted + phone |
 | 4 | Real creation link + matching the new bot | Done (2026-11-07): real Telegram via Desktop |
-| 5 | Activation (token, profile, webhook) | Not started |
+| 5 | Activation (token, profile, webhook) | Code done, tests pass; hosted check after deploy |
 | 6 | Real replies | Not started |
 | 7 | Lifecycle: delete, token change, expiry, retire dev endpoint | Not started |
 
@@ -99,3 +99,17 @@ Code: `stubs/manager.py` (`handle_start`, `handle_managed_bot`) and a new `claim
 - **Finding (2026-11-07):** Telegram's servers accept our `request_managed_bot` button. But the **iOS app** opened an empty "Forward" chat picker instead of a creation screen, so it doesn't support the button yet. **Telegram Desktop** shows the creation screen. Tell organizers to use Desktop (or an app version with support) until iOS catches up.
 - [x] Keeping the suggested username (Telegram Desktop): `match: @h4h_test_89e432b_bot (9260990615) -> bot bb818040-… by username (2 candidate(s))`.
 - [x] Changed username (Telegram Desktop): `match: @newname12bot (9241523573) -> bot 95f5ee45-… by most recent claim (1 candidate(s))`.
+
+## Stage 5 checks
+
+Code: `stubs/manager.py` (`activate`, `bot_token`) and `stubs/runtime.py` (`send`).
+- **Right after the match:** `getManagedBotToken` → `setMyName` / `setMyDescription` / `setMyShortDescription` from config → `setWebhook` to `{PUBLIC_URL}/webhook/<bot_id>` with a fresh per-bot secret and `allowed_updates: ["message"]` → status `active`, `telegram_link` from the actual username. The organizer gets "Готово! Бот @… работает: t.me/…".
+  - Profile failures are logged and skipped. A token or webhook failure leaves the bot `pending` (linked) and tells the organizer to open the link again; reopening it retries activation.
+- **Tokens:** never stored. `bot_token` caches them in memory; the runtime fetches one on first send after a restart, and re-fetches once on a 401 (e.g. rotated in BotFather).
+- The dev activate endpoint still works (the smoke test uses it); Stage 7 retires it. The lifecycle tests no longer use it.
+- Hosted replies still go through the `TELEGRAM_SEND` gate, which Render doesn't set, so a hosted bot activates but only logs its replies until Stage 6.
+
+- [x] Local: 38 tests; 37 pass and 1 is skipped (Stage 7). Five Stage 5 tests: activation end to end (renamed username, profile, webhook, secret matches, token not stored or returned, answers a reader), webhook failure then retry via the link, token fetch failure, profile failure not fatal, token rotation.
+- [x] The tests catch breakage: dropping the 401 re-fetch or the retry-on-reopen each make a test fail.
+- [x] With no token, the smoke test passes.
+- [ ] Hosted (Telegram Desktop): create a bot via the API → open `creation_link` → create. The manager replies with the t.me link; `GET /v1/bots/<id>` shows `active`; the Render log shows `activated: bot … as @…`; the new bot's profile shows the config's name and description.
