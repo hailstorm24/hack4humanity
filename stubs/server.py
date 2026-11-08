@@ -31,7 +31,6 @@ ROUTES = (
 )
 
 if __name__ == "__main__":
-    classifier._check_rules()
     print(f"[stubs] storage: {init_db()}", file=sys.stderr)
     manager.startup()
     serve(ROUTES, PORT, "stubs")

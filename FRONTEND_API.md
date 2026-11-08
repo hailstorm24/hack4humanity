@@ -260,6 +260,7 @@ curl -X POST https://h4h-narrative-stubs.onrender.com/v1/_dev/bots/$BOT_ID/activ
 
 - **Testing the failed state:** send body `{"fail": "bot_limit_exceeded"}` to the same endpoint.
 - **Testing the expired state:** pending bots expire 24 h after creation. There is no shortcut.
+- **Triggering a narrative:** the classifier matches keywords, not meaning. Every narrative and subnarrative has a demo sentence in Russian and English in `stubs/classifier_rules.json` (`demo`), or run `python3 stubs/classifier.py --demo`. Send one to an active bot to get that label's reply. "Европа" alone gives a low-score (0.41) label that most thresholds filter out.
 - **Testing a 503:** none from the UI side; the classifier is in the same process and stays up.
 - **Unsupported methods:** `PUT` and `PATCH` return 501 with an HTML body, not the JSON error shape. The API has no update endpoint by design.
 - **Shared data:** everyone using the hosted URL sees the same bots, and they persist. Use clearly fake usernames such as `test_<name>_bot`.
