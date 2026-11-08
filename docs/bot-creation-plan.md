@@ -10,7 +10,7 @@ Each stage ends with a check that must pass before the next stage starts.
 | 1 | Persistent storage | Done (2026-11-07): Render + Neon |
 | 2 | Telegram client + fake Telegram API for tests | Done (2026-11-07): local tests |
 | 3 | Manager bot (BotFather, webhook) | Done (2026-11-07): hosted + phone |
-| 4 | Real creation link + matching the new bot | Code done, tests pass; phone check after deploy |
+| 4 | Real creation link + matching the new bot | Done (2026-11-07): real Telegram via Desktop |
 | 5 | Activation (token, profile, webhook) | Not started |
 | 6 | Real replies | Not started |
 | 7 | Lifecycle: delete, token change, expiry, retire dev endpoint | Not started |
@@ -96,5 +96,6 @@ Code: `stubs/manager.py` (`handle_start`, `handle_managed_bot`) and a new `claim
 
 - [x] Local: 35 tests; 33 pass and 2 are skipped (Stages 5, 7). Eight new Stage 4 tests.
 - [x] The tests catch breakage: matching any creator's claim, ignoring the username preference, or skipping the expiry check each make a test fail.
-- [ ] Phone, keeping the suggested username: create a bot via the API → open `creation_link` → tap "Создать бота" → confirm. The manager replies "Бот @… создан", and the Render log shows `match: @… -> bot <id> by username`.
-- [ ] Phone, changing the username in Telegram: same steps; the log shows `by most recent claim` with the new username.
+- **Finding (2026-11-07):** Telegram's servers accept our `request_managed_bot` button. But the **iOS app** opened an empty "Forward" chat picker instead of a creation screen, so it doesn't support the button yet. **Telegram Desktop** shows the creation screen. Tell organizers to use Desktop (or an app version with support) until iOS catches up.
+- [x] Keeping the suggested username (Telegram Desktop): `match: @h4h_test_89e432b_bot (9260990615) -> bot bb818040-… by username (2 candidate(s))`.
+- [x] Changed username (Telegram Desktop): `match: @newname12bot (9241523573) -> bot 95f5ee45-… by most recent claim (1 candidate(s))`.
