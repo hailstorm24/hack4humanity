@@ -4,9 +4,9 @@ The service runs as a subprocess with TELEGRAM_API_BASE pointing at the fake
 and a throwaway SQLite file (sending is on by default since Stage 6). The fake plays Telegram: it
 delivers updates to the service's webhooks and records what the service sends.
 
-Steps that later stages build are skipped tests named after their stage. As
-each stage lands, its skip is removed. Since Stage 5, active bots are made the
-real way: /start link -> create in Telegram -> managed_bot update -> activation.
+Tests are grouped by the plan stage that added them (docs/bot-creation-plan.md).
+Active bots are made the real way: /start link -> create in Telegram ->
+managed_bot update -> activation.
 
     python3 -m unittest discover -s tests -v
 """
@@ -188,12 +188,16 @@ class LifecycleTest(unittest.TestCase):
 
     def test_deleted_bot_stops_replying(self):
         bot, token = self._new_active_bot("deleted_test_bot")
+        secret = self.fake.bot(token)["webhook"]["secret_token"]
         self.assertEqual(self.api("DELETE", f"/v1/bots/{bot['bot_id']}")[0], 204)
         before = len(self.fake.outbox)
-        self.fake.user_sends(token, READER, text="НАТО провоцировало Россию")
+        # Telegram no longer delivers (Stage 7), and a late delivery with the old secret is ignored.
+        update = {"update_id": 1, "message": {"message_id": 1, "date": 1, "from": READER,
+                                              "chat": {"id": READER["id"], "type": "private"},
+                                              "text": "НАТО провоцировало Россию"}}
+        self.assertEqual(self.api("POST", f"/webhook/{bot['bot_id']}", update,
+                                  {"X-Telegram-Bot-Api-Secret-Token": secret}), (200, None))
         self.assertEqual(len(self.fake.outbox), before)
-
-    # --- Later stages: shape fixed now, enabled as each stage lands ---------------
 
     # --- Stage 3: manager bot --------------------------------------------------
 
@@ -419,11 +423,85 @@ class LifecycleTest(unittest.TestCase):
         self.assertEqual((status, body), (200, {"stub_replies": ["BLAME"]}))
         self.assertEqual(len(self.fake.outbox), before)
 
-    @unittest.skip("Stage 7: DELETE calls deleteWebhook")
+    # --- Stage 7: lifecycle -------------------------------------------------------
+
     def test_stage7_delete_removes_webhook(self):
         bot, token = self._new_active_bot("stage7_test_bot")
         self.api("DELETE", f"/v1/bots/{bot['bot_id']}")
         self.assertEqual(telegram.get_webhook_info(token)["url"], "")
+        self.assertEqual(self.fake.calls_to("deleteWebhook")[-1]["params"].get("drop_pending_updates"), True)
+
+    def test_stage7_delete_survives_telegram_error(self):
+        bot, token = self._new_active_bot("delete_err_test_bot")
+        self.fake.inject_error("deleteWebhook", 500, "Internal Server Error")
+        self.assertEqual(self.api("DELETE", f"/v1/bots/{bot['bot_id']}")[0], 204)
+        self.assertEqual(self.api("GET", f"/v1/bots/{bot['bot_id']}")[1]["status"], "deleted")
+
+    def _token_or_owner_update(self, token, owner):
+        b = self.fake.bot(token)
+        bot_user = {"id": b["id"], "is_bot": True, "first_name": b["first_name"], "username": b["username"]}
+        return self.fake.deliver(self.manager, {"managed_bot": {"user": owner, "bot": bot_user}})
+
+    def test_stage7_token_change_rewires_webhook(self):
+        bot, token = self._new_active_bot("tokenchange_test_bot")
+        secret = self.fake.bot(token)["webhook"]["secret_token"]
+        new_token = telegram.replace_managed_bot_token(self.manager, self.fake.bot(token)["id"])
+        self.fake.bot(new_token)["webhook"] = None  # as if Telegram dropped it with the old token
+        before = len(self.fake.calls_to("getManagedBotToken"))
+        org = {"id": self._row(bot["bot_id"])["organizer_tg_id"], "is_bot": False, "first_name": "Org"}
+        self.assertEqual(self._token_or_owner_update(new_token, org)[0], 200)
+        self.assertGreater(len(self.fake.calls_to("getManagedBotToken")), before)  # fresh token fetched
+        hook = self.fake.bot(new_token)["webhook"]
+        self.assertTrue(hook["url"].endswith(f"/webhook/{bot['bot_id']}"))
+        self.assertEqual(hook["secret_token"], secret)
+        self.fake.user_sends(new_token, READER, text="НАТО провоцировало Россию")
+        self.assertEqual(self.fake.sent_to(READER["id"])[-1]["text"], "BLAME")
+
+    def test_stage7_owner_change_is_recorded(self):
+        bot, token = self._new_active_bot("ownerchange_test_bot")
+        new_owner = new_organizer()
+        self._token_or_owner_update(token, new_owner)
+        row = self._row(bot["bot_id"])
+        self.assertEqual((row["organizer_tg_id"], row["status"]), (new_owner["id"], "active"))
+        self.assertEqual(self.fake.sent_to(new_owner["id"]), [])  # no chatter on owner changes
+
+    def test_stage7_update_for_failed_activation_retries(self):
+        org, bot_id = new_organizer(), self._pending(username="update_retry_test_bot")
+        self._start(org, bot_id)
+        self.fake.inject_error("setWebhook", 500, "Internal Server Error")
+        token, _ = self.fake.create_managed_bot(self.manager, org, "update_retry_test_bot", "Ret")
+        self.assertEqual(self._row(bot_id)["status"], "pending")
+        self._token_or_owner_update(token, org)
+        self.assertEqual(self._row(bot_id)["status"], "active")
+
+    def test_stage7_update_for_deleted_bot_keeps_it_silent(self):
+        bot, token = self._new_active_bot("deleted_update_test_bot")
+        self.api("DELETE", f"/v1/bots/{bot['bot_id']}")
+        telegram.set_webhook(token, f"{self.base}/webhook/{bot['bot_id']}", "x" * 32)  # someone re-pointed it
+        self._token_or_owner_update(token, new_organizer())
+        self.assertIsNone(self.fake.bot(token)["webhook"])
+        self.assertEqual(self._row(bot["bot_id"])["status"], "deleted")
+
+    def test_stage7_expired_linked_bot_is_not_activated(self):
+        org, bot_id = new_organizer(), self._pending(username="expired_link_test_bot")
+        self._start(org, bot_id)
+        self.fake.inject_error("setWebhook", 500, "Internal Server Error")
+        token, _ = self.fake.create_managed_bot(self.manager, org, "expired_link_test_bot", "Exp")
+        with self.db() as c:
+            c.execute("UPDATE bots SET expires_at='2000-01-01T00:00:00Z' WHERE bot_id=?", (bot_id,))
+        self.assertIn("истёк", self._start(org, bot_id)["text"])  # reopening no longer retries
+        self._token_or_owner_update(token, org)  # nor does a later update
+        self.assertEqual(self.api("GET", f"/v1/bots/{bot_id}")[1]["status"], "expired")
+        self.assertIsNone(self.fake.bot(token)["webhook"])
+
+    def test_stage7_dev_endpoint_refuses_linked_bot(self):
+        org, bot_id = new_organizer(), self._pending(username="devlinked_test_bot")
+        self._start(org, bot_id)
+        self.fake.inject_error("setWebhook", 500, "Internal Server Error")
+        self.fake.create_managed_bot(self.manager, org, "devlinked_test_bot", "Dev")
+        status, _ = self.api("POST", f"/v1/_dev/bots/{bot_id}/activate", {}, {"X-Dev-Key": DEV_KEY})
+        self.assertEqual(status, 409)
+        self.assertEqual(self._row(bot_id)["status"], "pending")
 
 
 if __name__ == "__main__":

@@ -13,7 +13,7 @@ Each stage ends with a check that must pass before the next stage starts.
 | 4 | Real creation link + matching the new bot | Done (2026-11-07): real Telegram via Desktop |
 | 5 | Activation (token, profile, webhook) | Done (2026-11-08): real Telegram via Desktop |
 | 6 | Real replies | Replies work on a phone (2026-11-08); after-sleep check open |
-| 7 | Lifecycle: delete, token change, expiry, retire dev endpoint | Not started |
+| 7 | Lifecycle: delete, token change, expiry, dev endpoint | Code done, tests pass; phone check after deploy |
 
 ## Stage 0 decisions
 
@@ -127,3 +127,19 @@ Code: `stubs/runtime.py`, `stubs/common.py` (`UpdateDedup`), `stubs/manager.py`.
 - [x] With no token, the smoke test passes.
 - [x] Phone, after deploy (2026-11-08): a message to `@h4h_s5_bf13ee_bot` got a real reply in Telegram, threaded under it.
 - [ ] Phone, after the service has slept (15+ min idle): send one message; exactly one reply arrives, within about a minute.
+
+## Stage 7 checks
+
+Code: `stubs/manager.py` (`handle_known_bot`, `remove_webhook`) and `stubs/management.py` (`delete_bot`, `dev_activate`).
+- **Delete:** `DELETE /v1/bots/{id}` also calls `deleteWebhook` (dropping pending updates) with the bot's token and forgets the cached token. Telegram errors are logged; the delete still succeeds, and the runtime ignores deleted bots anyway.
+- **Token or owner change:** a `managed_bot` update for a bot we already linked records the (new) owner and username, then:
+  - `active`: `setWebhook` again with a freshly fetched token and the same secret, in case the old webhook went with the old token. No message to anyone.
+  - linked `pending`, not expired: retries activation (like reopening the link).
+  - `deleted`, `expired`, `failed`: makes sure no webhook points at us.
+- **Expiry:** linked pending bots expire like any pending bot. After `expires_at`, reopening the link says "expired" and later updates don't activate them. The Telegram bot stays with the organizer, without a webhook.
+- **Dev endpoint: kept on purpose (decided 2026-11-08), not retired.** It's the only way to see `active`/`failed` without Telegram, for UI work and the hosted smoke test. Fenced: it needs `DEV_KEY` whenever a manager bot is configured, returns 409 for a bot linked to a real Telegram bot, and real creation never uses it.
+
+- [x] Local: 49 tests, all pass, none skipped. Eight Stage 7 tests: delete removes the webhook, delete survives a Telegram error, token change re-wires the webhook, owner change is recorded quietly, an update retries a failed activation, an update for a deleted bot keeps it silent, an expired linked bot isn't activated, and the dev endpoint refuses linked bots.
+- [x] The tests catch breakage: skipping the delete's `deleteWebhook`, the expiry check, or the dev endpoint's linked-bot guard each make a test fail.
+- [ ] Hosted (phone or Desktop): `DELETE` `@h4h_s5_bf13ee_bot`'s record; the bot stops replying, and the Render log shows `webhook removed for bot …`.
+- [ ] Hosted, optional: revoke that bot's token in BotFather before deleting; it keeps replying (the Render log shows `managed_bot: known bot … (token change)` and `webhook re-set`).
