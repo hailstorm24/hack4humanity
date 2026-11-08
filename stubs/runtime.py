@@ -14,7 +14,7 @@ import os
 import sys
 import urllib.request
 
-from common import CLASSIFIER_URL, db, http_json, serve
+from common import CLASSIFIER_URL, db, http_json, init_db, serve
 
 TELEGRAM_SEND = os.environ.get("TELEGRAM_SEND") == "1"
 MAX_LEN = 4096
@@ -107,5 +107,5 @@ def webhook(req, m, update):
 ROUTES = [("POST", r"/webhook/([0-9a-fA-F-]{36})", webhook)]
 
 if __name__ == "__main__":
-    db().close()
+    print(f"[runtime] storage: {init_db()}", file=sys.stderr)
     serve(ROUTES, 8002, "runtime")

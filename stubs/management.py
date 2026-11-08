@@ -9,16 +9,21 @@ Dev-only (not in the spec):
        -> activates the bot and returns its webhook `secret_token`, or marks it failed.
 """
 import json
+import os
 import re
 import secrets
+import sys
 import uuid
 from datetime import datetime, timedelta, timezone
 
 import hmac
 
-from common import CLASSIFIER_URL, DEV_KEY, PUBLIC_URL, HttpError, db, error, http_json, serve
+from common import CLASSIFIER_URL, DEV_KEY, PUBLIC_URL, HttpError, db, error, http_json, init_db, serve
 
 PENDING_TTL = timedelta(hours=24)
+# The manager bot that creates and manages organizers' bots. Until Stage 3 sets the real one,
+# links point at a placeholder username.
+MANAGER_BOT_USERNAME = os.environ.get("MANAGER_BOT_USERNAME", "STUB_MANAGER_bot")
 USERNAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{1,28}[Bb][Oo][Tt]$")
 UUID_RE = r"([0-9a-fA-F-]{36})"
 STATUSES = ["pending", "active", "failed", "expired", "deleted"]
@@ -148,6 +153,8 @@ def to_api(row):
         bot["expires_at"] = row["expires_at"]
     if status == "active":
         bot["telegram_link"] = row["telegram_link"]
+        # Bots activated before this column existed fall back to the requested username.
+        bot["telegram_username"] = row["telegram_username"] or bot["config"]["username"]
     if status == "failed":
         bot["failure_reason"] = row["failure_reason"]
     if status == "deleted":
@@ -178,8 +185,9 @@ def create_bot(req, m, body):
             " VALUES (?,?,?,?,?,?,?)",
             (bot_id, "pending", json.dumps(cfg, ensure_ascii=False), taxonomy["taxonomy_version"],
              iso(created), iso(created + PENDING_TTL),
-             # Placeholder: the real link comes from Telegram's managed-bot flow.
-             f"https://t.me/newbot/STUB_MANAGER_bot/{cfg['username']}?name={bot_id}"),
+             # Organizer opens the manager bot with /start <bot_id>; it learns their Telegram id
+             # (to match the later managed_bot update) and offers a "create bot" button.
+             f"https://t.me/{MANAGER_BOT_USERNAME}?start={bot_id}"),
         )
     return 201, to_api(get_row(bot_id))
 
@@ -231,10 +239,12 @@ def dev_activate(req, m, body):
             c.execute("UPDATE bots SET status='failed', failure_reason=? WHERE bot_id=?", (fail, row["bot_id"]))
             return 200, {"status": "failed", "failure_reason": fail}
         secret = secrets.token_urlsafe(32)
-        username = json.loads(row["config"])["username"]
-        c.execute("UPDATE bots SET status='active', secret_token=?, telegram_link=?, telegram_token=?"
-                  " WHERE bot_id=?",
-                  (secret, f"https://t.me/{username}", (body or {}).get("telegram_token"), row["bot_id"]))
+        # {"telegram_username": "..."} simulates the organizer changing the username in Telegram.
+        username = (body or {}).get("telegram_username") or json.loads(row["config"])["username"]
+        c.execute("UPDATE bots SET status='active', secret_token=?, telegram_link=?, telegram_token=?,"
+                  " telegram_username=? WHERE bot_id=?",
+                  (secret, f"https://t.me/{username}", (body or {}).get("telegram_token"), username,
+                   row["bot_id"]))
     return 200, {"status": "active", "secret_token": secret,
                  "webhook_url": f"{PUBLIC_URL or 'http://127.0.0.1:8002'}/webhook/{row['bot_id']}"}
 
@@ -249,5 +259,5 @@ ROUTES = [
 ]
 
 if __name__ == "__main__":
-    db().close()
+    print(f"[management] storage: {init_db()}", file=sys.stderr)
     serve(ROUTES, 8000, "management")
