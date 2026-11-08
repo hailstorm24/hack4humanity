@@ -45,6 +45,17 @@ Stage 7 (lifecycle):
 - Linked pending bots expire like any pending bot: after expires_at, reopening
   the link says "expired" and no update activates them.
 
+Demo hardening:
+- The create button is an inline URL button to Telegram's creation link,
+  `https://t.me/newbot/<manager>/<username>?name=<display_name>`, instead of a
+  `request_managed_bot` reply-keyboard button: the iOS app doesn't support the
+  keyboard button yet, but opens the link. Matching still uses the claim from
+  /start, so the link must be opened from the same account.
+- A bot created by someone with no claimed pending record (e.g. they opened the
+  t.me/newbot link first) is remembered in `orphan_bots`. When that person
+  opens a creation link, the orphan is linked to it (username match first, else
+  the most recent) and activated at once, with no second bot needed.
+
 The webhook secret is derived from the token (HMAC), so there is no extra
 secret to configure, and it changes automatically if the token is rotated.
 
@@ -60,6 +71,7 @@ import re
 import secrets
 import sys
 import threading
+import urllib.parse
 from datetime import datetime, timezone
 
 import telegram
@@ -82,8 +94,8 @@ TEXT = {
               "Перешлите ему сообщение, чтобы проверить его."),
     "activation_failed": ("Бот @{username} создан, но настройку завершить не удалось. "
                           "Откройте ссылку из панели организатора ещё раз, чтобы повторить."),
-    "unmatched": ("Бот @{username} создан, но я не нашёл ожидающей заявки. "
-                  "Откройте ссылку из панели организатора и создайте бота через кнопку."),
+    "unmatched": ("Бот @{username} создан, но я пока не знаю, к какой заявке его подключить. "
+                  "Откройте ссылку из панели организатора — я подключу его автоматически."),
 }
 
 _state = {"username": os.environ.get("MANAGER_BOT_USERNAME", "STUB_MANAGER_bot"),
@@ -137,9 +149,10 @@ def now_iso():
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
-def request_id_for(bot_id):
-    """Stable signed-32-bit-safe id for the request_managed_bot button."""
-    return int(hashlib.sha256(bot_id.encode()).hexdigest()[:7], 16)  # < 2^28
+def newbot_link(cfg):
+    """Telegram's link that opens bot creation, managed by us, pre-filled from config."""
+    return (f"https://t.me/newbot/{username()}/{cfg['username']}"
+            f"?name={urllib.parse.quote(cfg['display_name'])}")
 
 
 def reply(chat_id, text, reply_markup=None):
@@ -164,17 +177,40 @@ def handle_start(msg, payload):
         if row["status"] == "expired" or (row["expires_at"] and row["expires_at"] < now_iso()):
             return reply(chat_id, TEXT["expired"])
         linked = row["telegram_bot_id"] is not None
+        cfg = json.loads(row["config"])
+        orphan = None
         if not linked:
             c.execute("UPDATE bots SET organizer_tg_id=?, claimed_at=? WHERE bot_id=? AND status='pending'",
                       (user_id, now_iso(), bot_id))
+            orphan = adopt_orphan(c, bot_id, user_id, cfg["username"])
+            if orphan:
+                row = c.execute("SELECT * FROM bots WHERE bot_id=?", (bot_id,)).fetchone()
     if linked:  # created in Telegram, but activation failed earlier: retry it
         log(f"retry activation: bot {bot_id} by tg user {user_id}")
         return activate_and_report(row, chat_id)
-    cfg = json.loads(row["config"])
+    if orphan:  # they created the bot before opening this link
+        log(f"match: @{orphan['telegram_username']} ({orphan['telegram_bot_id']}) -> bot {bot_id}"
+            f" by earlier unmatched creation")
+        return activate_and_report(row, chat_id)
     log(f"claim: bot {bot_id} by tg user {user_id}")
-    keyboard = telegram.request_managed_bot_keyboard(
-        TEXT["button"], request_id_for(bot_id), cfg["display_name"], cfg["username"])
+    keyboard = {"inline_keyboard": [[{"text": TEXT["button"], "url": newbot_link(cfg)}]]}
     reply(chat_id, TEXT["create"].format(name=cfg["display_name"]), keyboard)
+
+
+def adopt_orphan(c, bot_id, user_id, wanted_username):
+    """Link this user's unmatched managed bot (if any) to pending bot_id. Returns the orphan row or None."""
+    orphans = c.execute("SELECT * FROM orphan_bots WHERE creator_tg_id=? ORDER BY seen_at DESC",
+                        (user_id,)).fetchall()
+    orphans = [o for o in orphans if not c.execute(
+        "SELECT 1 FROM bots WHERE telegram_bot_id=?", (o["telegram_bot_id"],)).fetchone()]
+    if not orphans:
+        return None
+    by_name = [o for o in orphans if (o["telegram_username"] or "").lower() == wanted_username.lower()]
+    o = (by_name or orphans)[0]
+    c.execute("UPDATE bots SET telegram_bot_id=?, telegram_username=? WHERE bot_id=? AND status='pending'",
+              (o["telegram_bot_id"], o["telegram_username"], bot_id))
+    c.execute("DELETE FROM orphan_bots WHERE telegram_bot_id=?", (o["telegram_bot_id"],))
+    return o
 
 
 def handle_managed_bot(mb):
@@ -192,7 +228,13 @@ def handle_managed_bot(mb):
             " AND (expires_at IS NULL OR expires_at > ?) ORDER BY claimed_at DESC",
             (creator["id"], now_iso())).fetchall()
         if not candidates:
-            log(f"managed_bot: no pending claim for tg user {creator['id']} (bot @{tg_username})")
+            c.execute("INSERT INTO orphan_bots (telegram_bot_id, creator_tg_id, telegram_username, seen_at)"
+                      " VALUES (?,?,?,?) ON CONFLICT (telegram_bot_id) DO UPDATE SET"
+                      " creator_tg_id=excluded.creator_tg_id, telegram_username=excluded.telegram_username,"
+                      " seen_at=excluded.seen_at",
+                      (tg_bot_id, creator["id"], tg_username, now_iso()))
+            log(f"managed_bot: no pending claim for tg user {creator['id']} (bot @{tg_username});"
+                f" kept as orphan until they open a creation link")
             return reply(creator["id"], TEXT["unmatched"].format(username=tg_username),
                          {"remove_keyboard": True})
         by_name = [r for r in candidates
@@ -200,6 +242,7 @@ def handle_managed_bot(mb):
         row = (by_name or candidates)[0]
         c.execute("UPDATE bots SET telegram_bot_id=?, telegram_username=? WHERE bot_id=? AND status='pending'",
                   (tg_bot_id, tg_username, row["bot_id"]))
+        c.execute("DELETE FROM orphan_bots WHERE telegram_bot_id=?", (tg_bot_id,))
         row = c.execute("SELECT * FROM bots WHERE bot_id=?", (row["bot_id"],)).fetchone()
     how = "username" if by_name else "most recent claim"
     log(f"match: @{tg_username} ({tg_bot_id}) -> bot {row['bot_id']} by {how} ({len(candidates)} candidate(s))")
