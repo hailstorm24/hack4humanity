@@ -1,5 +1,6 @@
 # Render Blueprint: free web service running all three stubs in one process (stubs/server.py).
-# Free tier: sleeps after 15 min idle (~1 min cold start); SQLite is wiped on every restart/deploy/sleep.
+# Free tier: sleeps after 15 min idle (~1 min cold start). Data lives in Postgres (DATABASE_URL, e.g. Neon free);
+# without it the service falls back to SQLite on the container disk, which Render wipes on every sleep/deploy.
 services:
   - type: web
     name: h4h-narrative-stubs
@@ -13,3 +14,5 @@ services:
     envVars:
       - key: DEV_KEY          # header X-Dev-Key for /v1/_dev/... ; read it in the Render dashboard
         generateValue: true
+      - key: DATABASE_URL     # Postgres connection string; set in the dashboard, never committed
+        sync: false

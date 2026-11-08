@@ -13,6 +13,8 @@ Stdlib-only Python (3.10+, no installs) implementations of the three specs.
 ```
 
 State lives in `data.db` (SQLite, shared by management + runtime). Delete it to reset.
+Set `DATABASE_URL=postgresql://...` to use Postgres instead (needs `pip install -r requirements.txt`). See `store.py`.
+Smoke test any running server: `python3 ../tools/smoke_test.py http://127.0.0.1:8080 --dev-key KEY` (all services in one process via `server.py`).
 Taxonomy: `taxonomy.json`, SemEval 2025 Task 10 URW (11 narratives, 38 sub-narratives).
 
 ## Hosting: Render free tier
@@ -20,7 +22,7 @@ Taxonomy: `taxonomy.json`, SemEval 2025 Task 10 URW (11 narratives, 38 sub-narra
 `/v1/...` (management), `/classifier/v1/...`, `/webhook/{bot_id}` and `/healthz`.
 
 - **Cost:** free. The service sleeps after 15 min with no traffic, and the first request after that takes about 1 minute.
-- **Data is temporary:** SQLite lives on the container's disk and is **wiped on every sleep, restart or deploy**. Treat bots as throwaway test data.
+- **Data:** set `DATABASE_URL` (a Postgres connection string, e.g. Neon's free tier) in the Render dashboard so bots survive sleeps and deploys. Without it, the service falls back to SQLite on the container disk, which Render wipes on every sleep, restart or deploy.
 - **Dev key:** Render generates `DEV_KEY`. Copy it from the service's Environment tab in the dashboard.
 - **Deploys:** `autoDeploy` rebuilds on every push to the connected branch.
 - **Run the same way locally:** `PORT=8080 HOST=127.0.0.1 python3 server.py`

@@ -10,6 +10,7 @@ the classifier at CLASSIFIER_URL), so splitting them up later only
 means changing that URL.
 """
 import os
+import sys
 
 PORT = int(os.environ.get("PORT", "8080"))
 os.environ.setdefault("HOST", "0.0.0.0")
@@ -18,7 +19,7 @@ os.environ.setdefault("CLASSIFIER_URL", f"http://127.0.0.1:{PORT}/classifier/v1"
 import classifier  # noqa: E402  (env must be set before importing common)
 import management  # noqa: E402
 import runtime  # noqa: E402
-from common import db, serve  # noqa: E402
+from common import init_db, serve  # noqa: E402
 
 ROUTES = (
     management.ROUTES
@@ -29,5 +30,5 @@ ROUTES = (
 
 if __name__ == "__main__":
     classifier._check_rules()
-    db().close()
+    print(f"[stubs] storage: {init_db()}", file=sys.stderr)
     serve(ROUTES, PORT, "stubs")

@@ -2,14 +2,14 @@
 import json
 import os
 import re
-import sqlite3
 import sys
 import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+from store import db, init as init_db  # noqa: F401  (re-exported for the services)
+
 HERE = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.environ.get("STUB_DB", os.path.join(HERE, "data.db"))
 CLASSIFIER_URL = os.environ.get("CLASSIFIER_URL", "http://127.0.0.1:8001/v1")
 # Public base URL when hosted. Render sets RENDER_EXTERNAL_URL / RENDER_EXTERNAL_HOSTNAME itself.
 PUBLIC_URL = (os.environ.get("PUBLIC_URL")
@@ -55,27 +55,6 @@ def http_json(method, url, body=None, timeout=10):
             return e.code, json.loads(raw)
         except ValueError:
             return e.code, None
-
-
-def db():
-    os.makedirs(os.path.dirname(DB_PATH) or ".", exist_ok=True)
-    conn = sqlite3.connect(DB_PATH, timeout=5)
-    conn.row_factory = sqlite3.Row
-    conn.execute("""CREATE TABLE IF NOT EXISTS bots (
-        bot_id TEXT PRIMARY KEY,
-        status TEXT NOT NULL,
-        config TEXT NOT NULL,
-        taxonomy_version TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        expires_at TEXT,
-        creation_link TEXT,
-        telegram_link TEXT,
-        failure_reason TEXT,
-        deleted_at TEXT,
-        secret_token TEXT,
-        telegram_token TEXT
-    )""")
-    return conn
 
 
 def serve(routes, port, name):
