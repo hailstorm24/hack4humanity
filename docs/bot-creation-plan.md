@@ -12,7 +12,7 @@ Each stage ends with a check that must pass before the next stage starts.
 | 3 | Manager bot (BotFather, webhook) | Done (2026-11-07): hosted + phone |
 | 4 | Real creation link + matching the new bot | Done (2026-11-07): real Telegram via Desktop |
 | 5 | Activation (token, profile, webhook) | Done (2026-11-08): real Telegram via Desktop |
-| 6 | Real replies | Code done, tests pass; phone check after deploy |
+| 6 | Real replies | Replies work on a phone (2026-11-08); after-sleep check open |
 | 7 | Lifecycle: delete, token change, expiry, retire dev endpoint | Not started |
 
 ## Stage 0 decisions
@@ -125,5 +125,5 @@ Code: `stubs/runtime.py`, `stubs/common.py` (`UpdateDedup`), `stubs/manager.py`.
 - [x] Local: 42 tests; 41 pass and 1 is skipped (Stage 7). Four new Stage 6 tests: a re-delivered update gets one reply, the same `update_id` on two bots is not a repeat, the manager skips repeats, and a tokenless bot only logs.
 - [x] The tests catch breakage: turning off dedup, or making sending opt-in again, each make tests fail.
 - [x] With no token, the smoke test passes.
-- [ ] Phone, after deploy: forward a channel post to `@h4h_s5_bf13ee_bot`; a reply arrives threaded under it ("BLAME" on a keyword match, else "Ничего не найдено.").
+- [x] Phone, after deploy (2026-11-08): a message to `@h4h_s5_bf13ee_bot` got a real reply in Telegram, threaded under it.
 - [ ] Phone, after the service has slept (15+ min idle): send one message; exactly one reply arrives, within about a minute.
