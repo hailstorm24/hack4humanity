@@ -14,6 +14,7 @@ export default function Bots() {
   const [err, setErr] = useState<string | null>(null);
   const [tab, setTab] = useState<(typeof TABS)[number]>("all");
   const [asking, setAsking] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const load = useCallback(() => {
     api.listBots().then((r) => { setBots(r.bots); setErr(null); }, (e: unknown) => setErr(describeError(e, "load your bots")));
@@ -26,22 +27,31 @@ export default function Bots() {
   useEffect(() => {
     if (!pendingIds) return;
     const ids = pendingIds.split(",");
+    let live = true; // drop answers that arrive after this effect was torn down (e.g. after a delete)
     const t = setInterval(() => {
       Promise.all(ids.map((id) => api.getBot(id).catch(() => null))).then((fresh) => {
+        if (!live) return;
         setBots((prev) => prev && prev.map((b) => fresh.find((f) => f?.bot_id === b.bot_id) ?? b));
       });
     }, 3000);
-    return () => clearInterval(t);
+    return () => {
+      live = false;
+      clearInterval(t);
+    };
   }, [pendingIds]);
 
   const remove = async (b: Bot) => {
+    setDeleting(true);
     try {
       await api.deleteBot(b.bot_id);
+      setBots((prev) => prev && prev.map((x) => (x.bot_id === b.bot_id ? { ...x, status: "deleted" } : x)));
       setAsking(null);
       toast("Bot deleted");
       load();
     } catch (e) {
       toast(describeError(e, "delete the bot"));
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -102,8 +112,8 @@ export default function Bots() {
                 <div className="confirm" role="alertdialog" aria-label="Confirm delete">
                   <span>Delete this bot? It stops answering. Its record stays readable.</span>
                   <span className="row" style={{ gap: 8 }}>
-                    <button type="button" className="btn sm" onClick={() => setAsking(null)}>Keep</button>
-                    <button type="button" className="btn sm danger solid" onClick={() => remove(b)}>Delete bot</button>
+                    <button type="button" className="btn sm" disabled={deleting} onClick={() => setAsking(null)}>Keep</button>
+                    <button type="button" className="btn sm danger solid" disabled={deleting} onClick={() => remove(b)}>{deleting ? "Deleting…" : "Delete bot"}</button>
                   </span>
                 </div>
               )}

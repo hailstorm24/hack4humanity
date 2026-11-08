@@ -14,7 +14,7 @@ The website for the Hack4Humanity narrative-bot builder. An organizer writes rep
 `src/lib/api.ts` is the only module the UI uses for data. With `NEXT_PUBLIC_API_BASE_URL` unset it uses the in-browser sample data in `src/lib/mock.ts` (kept in sessionStorage). With it set, every call goes to that API. Types are in `src/types/api.ts` and mirror the OpenAPI file. If the contract changes, update the types first.
 
 ## API contract
-Types in `src/types/api.ts` come from `src/types/api.gen.ts`, which is generated from `../frontend-openapi.yaml` (`npm run types`). Errors are branched on `body.error`, never the message (`src/lib/errors.ts`). Requests time out after 90 s and show a "Waking the server…" banner after 4 s, because the hosted API sleeps when idle. A bot's real handle is `telegram_username`; `config.username` is only a suggestion. Never call `/v1/_dev/...` from shipped code. Note: `frontend-redesign` is behind `main`; `api.gen.ts` was generated from `main`'s contract, so merge `main` to bring the root YAML in line.
+Types in `src/types/api.ts` come from `src/types/api.gen.ts`, which is generated from `../frontend-openapi.yaml` (`npm run types`). Errors are branched on `body.error`, never the message (`src/lib/errors.ts`). Requests time out after 90 s and show a "Waking the server…" banner after 4 s, because the hosted API sleeps when idle. A bot's real handle is `telegram_username`; `config.username` is only a suggestion. Never call `/v1/_dev/...` from shipped code. Run `npm run types` again whenever `../frontend-openapi.yaml` changes.
 
 ## Routes
 - `/` landing page, `/new` bot builder, `/bots` list, `/bots/[id]` confirmation and detail.

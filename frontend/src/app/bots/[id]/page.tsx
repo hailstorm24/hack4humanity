@@ -20,6 +20,7 @@ export default function BotPage() {
   const [now, setNow] = useState(() => Date.now());
   const [next, setNext] = useState(3);
   const [asking, setAsking] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const nextRef = useRef(3);
 
   const load = useCallback(() => {
@@ -58,7 +59,8 @@ export default function BotPage() {
 
   const c = bot.config;
   const remove = async () => {
-    try { await api.deleteBot(bot.bot_id); toast("Bot deleted"); router.push("/bots"); } catch (e) { toast(describeError(e, "delete the bot")); }
+    setDeleting(true);
+    try { await api.deleteBot(bot.bot_id); toast("Bot deleted"); router.push("/bots"); } catch (e) { toast(describeError(e, "delete the bot")); setDeleting(false); }
   };
   const act = async (o: "confirm" | "limit" | "expire") => { await simulate(bot.bot_id, o); toast("Done. The next check picks it up."); };
 
@@ -157,7 +159,7 @@ export default function BotPage() {
               <span>Delete this bot? It stops answering. Its record stays readable.</span>
               <span className="row" style={{ gap: 8 }}>
                 <button type="button" className="btn sm" onClick={() => setAsking(false)}>Keep</button>
-                <button type="button" className="btn sm danger solid" onClick={remove}>Delete bot</button>
+                <button type="button" className="btn sm danger solid" disabled={deleting} onClick={remove}>{deleting ? "Deleting…" : "Delete bot"}</button>
               </span>
             </div>
           )}
