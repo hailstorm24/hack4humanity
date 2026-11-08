@@ -9,6 +9,7 @@ Bots it creates use usernames starting with `smoketest_` and are deleted at the
 end of a full run.
 """
 import argparse
+import itertools
 import json
 import sys
 import urllib.error
@@ -102,8 +103,10 @@ def full_run(c):
     hook = f"/webhook/{bid}"
     sec = {"X-Telegram-Bot-Api-Secret-Token": act.get("secret_token", "")}
 
+    update_ids = itertools.count(1)  # unique like Telegram's; the runtime drops repeated ids
+
     def msg(**fields):
-        return {"update_id": 1, "message": {"message_id": 7, "date": 1, "chat": {"id": 1, "type": "private"}, **fields}}
+        return {"update_id": next(update_ids), "message": {"message_id": 7, "date": 1, "chat": {"id": 1, "type": "private"}, **fields}}
 
     expect(c.call("POST", hook, msg(text="НАТО провоцировало Россию"), sec)[1] == {"stub_replies": ["BLAME"]},
            "keyword match -> mapped reply")

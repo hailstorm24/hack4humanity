@@ -1,14 +1,19 @@
 """Bot Runtime stub (bot-runtime-api.yaml) on :8002.
 
-Implements the full message-handling algorithm from the spec. Sending is
-faked by default: replies are logged and echoed in the 200 response body
-(Telegram ignores webhook response bodies, so this is harmless) so you can
-test with curl.
+Implements the full message-handling algorithm from the spec. Replies are
+always echoed in the 200 response body as `stub_replies` (Telegram ignores
+webhook response bodies, so this is harmless and handy with curl).
 
-Set TELEGRAM_SEND=1 to really call sendMessage (via telegram.py, so
-TELEGRAM_API_BASE can point at a fake). The bot's token comes from
-manager.bot_token: the `telegram_token` passed to the dev activate endpoint,
-or else getManagedBotToken (cached in memory, re-fetched once after a 401).
+Replies are really sent (sendMessage via telegram.py, so TELEGRAM_API_BASE can
+point at a fake) whenever the bot has a token: from manager.bot_token, i.e.
+getManagedBotToken (cached in memory, re-fetched once after a 401), or the
+`telegram_token` passed to the dev activate endpoint. Bots without one (no
+MANAGER_BOT_TOKEN, or dev-activated without a token) only log their replies.
+TELEGRAM_SEND=0 forces log-only.
+
+Telegram re-delivers an update if we don't answer in time (e.g. while Render
+wakes up). Each bot's recent update_ids are remembered in memory, and repeats
+are acknowledged without replying again.
 """
 import hmac
 import json
@@ -17,11 +22,12 @@ import sys
 
 import manager
 import telegram
-from common import CLASSIFIER_URL, db, http_json, init_db, serve
+from common import CLASSIFIER_URL, UpdateDedup, db, http_json, init_db, serve
 
-TELEGRAM_SEND = os.environ.get("TELEGRAM_SEND") == "1"
+TELEGRAM_SEND = os.environ.get("TELEGRAM_SEND", "1") != "0"
 MAX_LEN = 4096
 OK = (200, None)
+_seen = UpdateDedup()
 
 
 def log(msg):
@@ -77,6 +83,9 @@ def webhook(req, m, update):
     given = req.headers.get("X-Telegram-Bot-Api-Secret-Token") or ""
     if not hmac.compare_digest(given.encode(), (row["secret_token"] or "").encode()):
         log(f"drop: bad secret for {bot_id}")
+        return OK
+    if isinstance(update, dict) and _seen.is_repeat(bot_id, update.get("update_id")):
+        log(f"drop: repeat update {update.get('update_id')} for {bot_id}")
         return OK
 
     msg = (update or {}).get("message") if isinstance(update, dict) else None

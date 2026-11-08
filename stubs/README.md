@@ -38,8 +38,9 @@ Taxonomy: `taxonomy.json`, SemEval 2025 Task 10 URW (11 narratives, 38 sub-narra
   manager bot, which offers a create button, then activates the new bot (token, profile, webhook). Without a token,
   simulate the organizer confirming with `POST /v1/_dev/bots/{id}/activate` (body `{}` or `{"fail":"username_occupied"}`);
   it returns the webhook `secret_token`.
-- **Sending**: the runtime logs replies and echoes them as `stub_replies` in the webhook response.
-  `TELEGRAM_SEND=1` sends for real, with the managed bot's token (or `{"telegram_token": "..."}` passed to dev activate).
+- **Sending**: the runtime sends real replies when the bot has a token (a managed bot, or `{"telegram_token": "..."}`
+  passed to dev activate). Otherwise it only logs them. Replies are always echoed as `stub_replies` in the webhook
+  response. `TELEGRAM_SEND=0` forces log-only.
 
 ## Walkthrough
 ```bash

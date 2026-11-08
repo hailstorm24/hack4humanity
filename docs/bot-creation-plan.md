@@ -12,7 +12,7 @@ Each stage ends with a check that must pass before the next stage starts.
 | 3 | Manager bot (BotFather, webhook) | Done (2026-11-07): hosted + phone |
 | 4 | Real creation link + matching the new bot | Done (2026-11-07): real Telegram via Desktop |
 | 5 | Activation (token, profile, webhook) | Done (2026-11-08): real Telegram via Desktop |
-| 6 | Real replies | Not started |
+| 6 | Real replies | Code done, tests pass; phone check after deploy |
 | 7 | Lifecycle: delete, token change, expiry, retire dev endpoint | Not started |
 
 ## Stage 0 decisions
@@ -29,7 +29,7 @@ Contract changes (in `bot-management-api.yaml`, bundled into `frontend-openapi.y
 - `creation_link` is now a manager-bot deep link. The UI should still treat it as opaque.
 - `failure_reason: username_occupied` no longer happens in practice.
 
-`FRONTEND_API.md` and the shared contract doc get updated once Stage 5 works end to end.
+`FRONTEND_API.md` and the shared contract doc get updated once Stage 5 works end to end (done in Stage 6).
 
 ## Telegram facts this relies on (Bot API 10.0, May 2026)
 
@@ -113,3 +113,17 @@ Code: `stubs/manager.py` (`activate`, `bot_token`) and `stubs/runtime.py` (`send
 - [x] The tests catch breakage: dropping the 401 re-fetch or the retry-on-reopen each make a test fail.
 - [x] With no token, the smoke test passes.
 - [x] Hosted (Telegram Desktop, 2026-11-08): bot `bf529fb1-…` created via the API, opened `creation_link`, kept the suggested username. `GET /v1/bots/<id>` went from `pending` to `active` with `telegram_username: h4h_s5_bf13ee_bot` and `telegram_link: https://t.me/h4h_s5_bf13ee_bot`, without the dev endpoint.
+
+## Stage 6 checks
+
+Code: `stubs/runtime.py`, `stubs/common.py` (`UpdateDedup`), `stubs/manager.py`.
+- **Sending is on by default.** The runtime sends whenever the bot has a token (a managed bot, or a dev-activated one given `telegram_token`). Bots without one only log their replies, so local runs without `MANAGER_BOT_TOKEN` and the dev-endpoint smoke test behave as before. `TELEGRAM_SEND=0` forces log-only.
+- **Repeat updates are skipped.** Telegram re-delivers an update it thinks we missed (e.g. while Render wakes up). Each bot's last 1000 `update_id`s, and the manager's, are kept in memory; a repeat gets a silent 200. A restart forgets them, which is fine: re-deliveries after a cold start land on the same new process.
+- `tools/smoke_test.py` now numbers its `update_id`s like Telegram does; reusing `1` would now be dropped as a repeat.
+- Docs: `FRONTEND_API.md`, the shared contract doc and `bot-management-api.yaml` (+ the bundle) describe real creation: the manager-bot link, Telegram Desktop, `telegram_username`, retry by reopening the link, tokens not stored, `failed` reserved, data persists.
+
+- [x] Local: 42 tests; 41 pass and 1 is skipped (Stage 7). Four new Stage 6 tests: a re-delivered update gets one reply, the same `update_id` on two bots is not a repeat, the manager skips repeats, and a tokenless bot only logs.
+- [x] The tests catch breakage: turning off dedup, or making sending opt-in again, each make tests fail.
+- [x] With no token, the smoke test passes.
+- [ ] Phone, after deploy: forward a channel post to `@h4h_s5_bf13ee_bot`; a reply arrives threaded under it ("BLAME" on a keyword match, else "Ничего не найдено.").
+- [ ] Phone, after the service has slept (15+ min idle): send one message; exactly one reply arrives, within about a minute.

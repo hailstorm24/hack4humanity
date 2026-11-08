@@ -22,12 +22,16 @@ info:
        the new bot, and matches it to the pending record by the creator's
        Telegram user id (so it still matches if the organizer changed the
        username). It fetches the token with `getManagedBotToken`, sets the
-       bot's name/description/commands, generates a random per-bot
-       `secret_token` (32-256 chars of `[A-Za-z0-9_-]`), and calls
+       bot's name, description and short description, generates a random
+       per-bot `secret_token` (32-256 chars of `[A-Za-z0-9_-]`), and calls
        `setWebhook` pointing to the shared runtime (`/webhook/{bot_id}`) with
-       that `secret_token`. Bot token and secret are kept in the store and
-       never returned by this API.
-    5. Status becomes `active`. If the organizer never confirms, status becomes
+       that `secret_token`. The secret is stored; the bot token is not (it is
+       re-fetched with `getManagedBotToken` when needed). Neither is ever
+       returned by this API.
+    5. Status becomes `active` and the manager bot sends the organizer the
+       bot's t.me link. If setup fails after Telegram created the bot, it
+       stays `pending` and the organizer is asked to open `creation_link`
+       again, which retries. If the organizer never confirms, status becomes
        `expired` after `expires_at`.
 
     Configuration is immutable after creation. To change responses, create a

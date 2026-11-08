@@ -3,8 +3,10 @@ import json
 import os
 import re
 import sys
+import threading
 import urllib.error
 import urllib.request
+from collections import OrderedDict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from store import db, init as init_db  # noqa: F401  (re-exported for the services)
@@ -18,6 +20,26 @@ PUBLIC_URL = (os.environ.get("PUBLIC_URL")
               ).rstrip("/")
 HOST = os.environ.get("HOST", "127.0.0.1")
 DEV_KEY = os.environ.get("DEV_KEY")  # when set, /_dev endpoints need header X-Dev-Key
+
+
+class UpdateDedup:
+    """Remembers recent Telegram update_ids per bot (memory only), to skip re-deliveries."""
+
+    def __init__(self, per_key=1000):
+        self._per_key, self._seen, self._lock = per_key, {}, threading.Lock()
+
+    def is_repeat(self, key, update_id):
+        """True if (key, update_id) was seen before; otherwise records it. None never repeats."""
+        if not isinstance(update_id, int):
+            return False
+        with self._lock:
+            ids = self._seen.setdefault(key, OrderedDict())
+            if update_id in ids:
+                return True
+            ids[update_id] = None
+            if len(ids) > self._per_key:
+                ids.popitem(last=False)
+            return False
 
 
 def load_taxonomy():

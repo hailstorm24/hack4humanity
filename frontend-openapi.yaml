@@ -15,19 +15,22 @@ info:
     \ confirmation is required.)\n4. The manager bot receives a `managed_bot` update naming the creator\
     \ and\n   the new bot, and matches it to the pending record by the creator's\n   Telegram user id\
     \ (so it still matches if the organizer changed the\n   username). It fetches the token with `getManagedBotToken`,\
-    \ sets the\n   bot's name/description/commands, generates a random per-bot\n   `secret_token` (32-256\
-    \ chars of `[A-Za-z0-9_-]`), and calls\n   `setWebhook` pointing to the shared runtime (`/webhook/{bot_id}`)\
-    \ with\n   that `secret_token`. Bot token and secret are kept in the store and\n   never returned\
-    \ by this API.\n5. Status becomes `active`. If the organizer never confirms, status becomes\n   `expired`\
-    \ after `expires_at`.\n\nConfiguration is immutable after creation. To change responses, create a\n\
-    new bot (or delete this one and create it again).\n\nNarrative and sub-narrative names in `responses`\
-    \ are validated against\nthe classifier taxonomy (`GET /taxonomy`). The taxonomy version in force\n\
-    at creation is stored on the bot as `taxonomy_version`.\n\nDeletion is a soft delete: the record stays\
-    \ readable with status\n`deleted` so there is a record of what the bot used to say.\n\n`config.username`\
-    \ is only a suggestion. Telegram checks availability in\nits own app and lets the organizer pick another\
-    \ username, so the bot may\ngo live under a different one. The real handle is returned as\n`telegram_username`\
-    \ (and in `telegram_link`); `config` is left unchanged.\n\nNo authentication (prototype). Note that\
-    \ `GET /bots` therefore lists every\nbot; once auth exists it must be scoped to the caller.\n\nGenerated\
+    \ sets the\n   bot's name, description and short description, generates a random\n   per-bot `secret_token`\
+    \ (32-256 chars of `[A-Za-z0-9_-]`), and calls\n   `setWebhook` pointing to the shared runtime (`/webhook/{bot_id}`)\
+    \ with\n   that `secret_token`. The secret is stored; the bot token is not (it is\n   re-fetched with\
+    \ `getManagedBotToken` when needed). Neither is ever\n   returned by this API.\n5. Status becomes\
+    \ `active` and the manager bot sends the organizer the\n   bot's t.me link. If setup fails after Telegram\
+    \ created the bot, it\n   stays `pending` and the organizer is asked to open `creation_link`\n   again,\
+    \ which retries. If the organizer never confirms, status becomes\n   `expired` after `expires_at`.\n\
+    \nConfiguration is immutable after creation. To change responses, create a\nnew bot (or delete this\
+    \ one and create it again).\n\nNarrative and sub-narrative names in `responses` are validated against\n\
+    the classifier taxonomy (`GET /taxonomy`). The taxonomy version in force\nat creation is stored on\
+    \ the bot as `taxonomy_version`.\n\nDeletion is a soft delete: the record stays readable with status\n\
+    `deleted` so there is a record of what the bot used to say.\n\n`config.username` is only a suggestion.\
+    \ Telegram checks availability in\nits own app and lets the organizer pick another username, so the\
+    \ bot may\ngo live under a different one. The real handle is returned as\n`telegram_username` (and\
+    \ in `telegram_link`); `config` is left unchanged.\n\nNo authentication (prototype). Note that `GET\
+    \ /bots` therefore lists every\nbot; once auth exists it must be scoped to the caller.\n\nGenerated\
     \ from bot-management-api.yaml + common.yaml by tools/bundle_frontend_spec.py; edit those, not this\
     \ file.\n"
 servers:
