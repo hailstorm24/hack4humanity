@@ -9,7 +9,7 @@ Each stage ends with a check that must pass before the next stage starts.
 | 0 | Decisions + contract changes | Done |
 | 1 | Persistent storage | Done (2026-11-07): Render + Neon |
 | 2 | Telegram client + fake Telegram API for tests | Done (2026-11-07): local tests |
-| 3 | Manager bot (BotFather, webhook) | Not started |
+| 3 | Manager bot (BotFather, webhook) | Code done, tests pass; hosted check needs the manager bot token |
 | 4 | Real creation link + matching the new bot | Not started |
 | 5 | Activation (token, profile, webhook) | Not started |
 | 6 | Real replies | Not started |
@@ -69,3 +69,17 @@ python3 -m unittest discover -s tests -v
 - [x] The runtime sends replies through `telegram.py` (`TELEGRAM_SEND=1`), not hand-built requests.
 
 The fake follows the docs, not observed behaviour. Stages 3–4 check the real API; if Telegram differs, fix the fake first, then the code.
+
+## Stage 3 checks
+
+Code: `stubs/manager.py`.
+- **At startup:** `getMe` gives the manager's username (used in `creation_link`) and `can_manage_bots`. Then `setWebhook` points at `{PUBLIC_URL}/telegram/manager`, with `allowed_updates = ["message", "managed_bot"]` and a webhook secret derived from the token (HMAC).
+- **`POST /telegram/manager`:** drops updates with a missing or wrong secret, answers private messages with an intro, and logs `managed_bot` updates (activation is Stage 5).
+- **`GET /v1/_dev/manager`** (needs `X-Dev-Key`): returns `getMe` and `getWebhookInfo` results, without the token or secret.
+- **Without `MANAGER_BOT_TOKEN`:** everything still runs, links use the `STUB_MANAGER_bot` placeholder, and manager updates are dropped.
+
+- [x] Local: 28 tests; 25 pass and 3 are skipped (Stages 4, 5, 7). Five new Stage 3 tests cover webhook registration, the intro reply, forged updates, quietly accepting a `managed_bot` update, and the dev status endpoint not leaking secrets.
+- [x] The tests catch breakage: removing the manager secret check makes them fail.
+- [x] With no token, the smoke test passes and links use the placeholder.
+- [ ] Hosted: `GET /v1/_dev/manager` shows `can_manage_bots: true`, `webhook_url` equal to `expected_webhook_url`, `pending_update_count: 0` and no `last_error_message`.
+- [ ] Hosted: sending `/start` to the manager bot from a phone gets the intro reply.

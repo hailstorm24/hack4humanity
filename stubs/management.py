@@ -9,7 +9,6 @@ Dev-only (not in the spec):
        -> activates the bot and returns its webhook `secret_token`, or marks it failed.
 """
 import json
-import os
 import re
 import secrets
 import sys
@@ -18,12 +17,10 @@ from datetime import datetime, timedelta, timezone
 
 import hmac
 
+import manager
 from common import CLASSIFIER_URL, DEV_KEY, PUBLIC_URL, HttpError, db, error, http_json, init_db, serve
 
 PENDING_TTL = timedelta(hours=24)
-# The manager bot that creates and manages organizers' bots. Until Stage 3 sets the real one,
-# links point at a placeholder username.
-MANAGER_BOT_USERNAME = os.environ.get("MANAGER_BOT_USERNAME", "STUB_MANAGER_bot")
 USERNAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{1,28}[Bb][Oo][Tt]$")
 UUID_RE = r"([0-9a-fA-F-]{36})"
 STATUSES = ["pending", "active", "failed", "expired", "deleted"]
@@ -187,7 +184,7 @@ def create_bot(req, m, body):
              iso(created), iso(created + PENDING_TTL),
              # Organizer opens the manager bot with /start <bot_id>; it learns their Telegram id
              # (to match the later managed_bot update) and offers a "create bot" button.
-             f"https://t.me/{MANAGER_BOT_USERNAME}?start={bot_id}"),
+             f"https://t.me/{manager.username()}?start={bot_id}"),
         )
     return 201, to_api(get_row(bot_id))
 
