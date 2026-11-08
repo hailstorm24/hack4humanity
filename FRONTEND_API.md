@@ -38,7 +38,7 @@ stateDiagram-v2
 
 1. `POST /v1/bots` returns 201 with `status: "pending"`, `creation_link` and `expires_at`.
 2. Show `creation_link` as the primary button, plus the time left until `expires_at`. It opens our manager bot (`@h4h_manager_bot`) in Telegram, which replies with a "Создать бота" button. Telegram then shows the suggested name and username, which the organizer may change, and creates the bot.
-   - Tell organizers to use **Telegram Desktop** for now. The iOS app doesn't support the create button yet (it opens an empty "Forward" screen).
+   - The "Создать бота" button opens Telegram's own creation link, which works on phones too. Organizers must open `creation_link` **first**, from the same Telegram account they create the bot with. If someone creates the bot first anyway, opening `creation_link` afterwards links it.
 3. Poll `GET /v1/bots/{bot_id}` every few seconds (3 s suggested) while `pending`. Stop once the status changes. Activation usually lands a few seconds after the organizer confirms.
 4. Branch on the new status:
    - `active`: show `telegram_link` and `@telegram_username`. Use these, not `config.username`: the organizer may have picked a different username in Telegram.

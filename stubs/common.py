@@ -145,4 +145,11 @@ def serve(routes, port, name):
             print(f"[{name}] {self.address_string()} {fmt % args}", file=sys.stderr)
 
     print(f"[{name}] listening on http://{HOST}:{port}", file=sys.stderr)
-    ThreadingHTTPServer((HOST, port), Handler).serve_forever()
+    class Server(ThreadingHTTPServer):
+        # The default listen backlog is 5: a burst of users (each reply also makes an
+        # internal classifier call to this same server) overflowed it, so connections
+        # stalled for seconds or failed. The OS may cap this (macOS 128, Linux 4096).
+        request_queue_size = 512
+        daemon_threads = True
+
+    Server((HOST, port), Handler).serve_forever()

@@ -246,10 +246,9 @@ class LifecycleTest(unittest.TestCase):
     def test_stage4_start_link_offers_create_button(self):
         org, bot_id = new_organizer(), self._pending()
         sent = self._start(org, bot_id)
-        req = sent["reply_markup"]["keyboard"][0][0]["request_managed_bot"]
-        self.assertEqual((req["suggested_name"], req["suggested_username"]),
-                         (CONFIG["display_name"], CONFIG["username"]))
-        self.assertTrue(0 <= req["request_id"] < 2**31)
+        button = sent["reply_markup"]["inline_keyboard"][0][0]
+        self.assertEqual(button["url"],  # Telegram's creation link; works on iOS, unlike request_managed_bot
+                         "https://t.me/newbot/h4h_manager_bot/odesa_factcheck_bot?name=Odesa%20Fact%20Check")
         row = self._row(bot_id)
         self.assertEqual((row["organizer_tg_id"], row["status"]), (org["id"], "pending"))
         self.assertTrue(row["claimed_at"])
@@ -303,7 +302,7 @@ class LifecycleTest(unittest.TestCase):
     def test_stage4_unclaimed_creator_is_told_and_nothing_linked(self):
         org, bot_id = new_organizer(), self._pending()  # never opened the link
         self.fake.create_managed_bot(self.manager, org, "stray_bot", "Stray")
-        self.assertIn("не нашёл", self.fake.sent_to(org["id"])[-1]["text"])
+        self.assertIn("откройте ссылку", self.fake.sent_to(org["id"])[-1]["text"].lower())
         self.assertIsNone(self._row(bot_id)["telegram_bot_id"])
 
     def test_stage4_repeat_update_for_linked_bot_is_ignored(self):
@@ -502,6 +501,40 @@ class LifecycleTest(unittest.TestCase):
         status, _ = self.api("POST", f"/v1/_dev/bots/{bot_id}/activate", {}, {"X-Dev-Key": DEV_KEY})
         self.assertEqual(status, 409)
         self.assertEqual(self._row(bot_id)["status"], "pending")
+
+    # --- Demo hardening: bots created before the link was opened -------------------
+
+    def test_demo_bot_created_before_link_is_adopted(self):
+        org, bot_id = new_organizer(), self._pending(username="early_bird_bot")
+        token, _ = self.fake.create_managed_bot(self.manager, org, "early_bird_bot", "Early")  # no /start yet
+        self.assertEqual(self._row(bot_id)["status"], "pending")
+        sent = self._start(org, bot_id)  # opening the link links and activates it at once
+        self.assertIn("t.me/early_bird_bot", sent["text"])
+        self.assertEqual(self.api("GET", f"/v1/bots/{bot_id}")[1]["status"], "active")
+        self.assertTrue(self.fake.bot(token)["webhook"]["url"].endswith(f"/webhook/{bot_id}"))
+        with self.db() as c:
+            self.assertEqual(c.execute("SELECT COUNT(*) FROM orphan_bots WHERE creator_tg_id=?",
+                                       (org["id"],)).fetchone()[0], 0)
+
+    def test_demo_orphans_prefer_username_then_latest(self):
+        org = new_organizer()
+        self.fake.create_managed_bot(self.manager, org, "wanted_orphan_bot", "Wanted")
+        time.sleep(1.1)  # seen_at has 1 s resolution
+        self.fake.create_managed_bot(self.manager, org, "other_orphan_bot", "Other")
+        first = self._pending(username="wanted_orphan_bot")
+        self._start(org, first)
+        self.assertEqual(self._row(first)["telegram_username"], "wanted_orphan_bot")  # username beats recency
+        second = self._pending(username="unrelated_name_bot")
+        self._start(org, second)
+        self.assertEqual(self._row(second)["telegram_username"], "other_orphan_bot")
+
+    def test_demo_orphan_of_someone_else_is_not_adopted(self):
+        creator, opener = new_organizer(), new_organizer()
+        bot_id = self._pending(username="not_yours_bot")
+        self.fake.create_managed_bot(self.manager, creator, "not_yours_bot", "Mine")
+        sent = self._start(opener, bot_id)
+        self.assertIn("inline_keyboard", sent["reply_markup"])  # offered a fresh create link instead
+        self.assertIsNone(self._row(bot_id)["telegram_bot_id"])
 
 
 if __name__ == "__main__":

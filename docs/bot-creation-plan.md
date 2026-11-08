@@ -143,3 +143,24 @@ Code: `stubs/manager.py` (`handle_known_bot`, `remove_webhook`) and `stubs/manag
 - [x] The tests catch breakage: skipping the delete's `deleteWebhook`, the expiry check, or the dev endpoint's linked-bot guard each make a test fail.
 - [ ] Hosted (phone or Desktop): `DELETE` `@h4h_s5_bf13ee_bot`'s record; the bot stops replying, and the Render log shows `webhook removed for bot …`.
 - [ ] Hosted, optional: revoke that bot's token in BotFather before deleting; it keeps replying (the Render log shows `managed_bot: known bot … (token change)` and `webhook re-set`).
+
+## Demo hardening (2026-11-08)
+
+Found while preparing a live demo; code in `stubs/manager.py`, `stubs/store.py`, `stubs/common.py` and `tools/load_test.py`.
+
+- **Phones:** the "Создать бота" button is now an inline URL button to Telegram's creation link, `https://t.me/newbot/<manager>/<username>?name=<display_name>`, instead of a `request_managed_bot` keyboard button. On 2026-11-08 a friend created a bot on an iPhone with that link; the keyboard button doesn't work on iOS.
+- **Creating before opening the link:** that friend used the direct link without opening `creation_link` first, so the bot arrived with no claim (`managed_bot: no pending claim for tg user …`). Such bots are now kept in a new `orphan_bots` table. When that person opens a creation link, the orphan is linked to it (username match first, else most recent) and activated at once.
+- **Listen backlog:** Python's HTTP server queues only 5 pending connections. A 100-request burst overflowed it: locally, 14 of 100 full replies failed and the tail took ~8 s; hosted, Render returned 502 for 50 of 200 requests. Now 512 (the OS may cap it lower).
+- **Postgres pooling:** every request opened a new TLS connection to Neon (hosted webhook p50 3.6 s under the burst). Up to 10 idle connections are now reused for 60 s. If a pooled connection was dropped by the server (Neon restart), the first statement retries once on a fresh connection.
+
+| Load test, 100 concurrent | Before | After |
+| --- | --- | --- |
+| Local, full reply path | 14 failed, max 7.8 s | 0 failed, max 63 ms |
+| Local, 200 concurrent on Postgres (Docker), full reply path | not run | 0 failed, max 148 ms |
+| Hosted (Render + Neon), classify + unknown-bot webhook | 50 of 200 got 502; webhook p50 3.6 s | after deploy: run `python3 tools/load_test.py https://h4h-narrative-stubs.onrender.com` |
+
+- [x] Local: 69 tests pass (3 new: a bot created before the link is adopted, username beats recency among orphans, someone else's orphan isn't adopted). Disabling adoption, or the username preference, makes a test fail.
+- [x] Local Postgres (Docker): smoke test and a 200-request load test pass; killing all pooled connections server-side causes 0 failed requests.
+- [ ] Hosted, after deploy: the load test passes without 502s.
+- [ ] Phone, after deploy: open a creation link on an iPhone, tap "Создать бота", confirm; the bot activates.
+- [ ] Desktop, after deploy: the same flow still works with the URL button.

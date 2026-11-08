@@ -16,6 +16,8 @@ State lives in `data.db` (SQLite, shared by management + runtime). Delete it to 
 Set `DATABASE_URL=postgresql://...` to use Postgres instead (needs `pip install -r requirements.txt`). See `store.py`.
 Unit + lifecycle tests (fake Telegram, no network): `python3 -m unittest discover -s ../tests -v` from here, or `-s tests` from the repo root.
 Smoke test any running server: `python3 ../tools/smoke_test.py http://127.0.0.1:8080 --dev-key KEY` (all services in one process via `server.py`).
+Load test (a demo audience's burst): `python3 ../tools/load_test.py <base_url> [-n 100] [--dev-key KEY]`. Without a key it only classifies and hits the webhook for an unknown bot, so it's safe on the hosted URL.
+Postgres connections are pooled (`DB_POOL_MAX`, default 10); see `store.py`.
 Taxonomy: `taxonomy.json`, SemEval 2025 Task 10 URW (11 narratives, 38 sub-narratives).
 
 ## Hosting: Render free tier
