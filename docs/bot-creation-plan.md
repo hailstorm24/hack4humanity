@@ -9,8 +9,8 @@ Each stage ends with a check that must pass before the next stage starts.
 | 0 | Decisions + contract changes | Done |
 | 1 | Persistent storage | Done (2026-11-07): Render + Neon |
 | 2 | Telegram client + fake Telegram API for tests | Done (2026-11-07): local tests |
-| 3 | Manager bot (BotFather, webhook) | Code done, tests pass; hosted check needs the manager bot token |
-| 4 | Real creation link + matching the new bot | Not started |
+| 3 | Manager bot (BotFather, webhook) | Done (2026-11-07): hosted + phone |
+| 4 | Real creation link + matching the new bot | Code done, tests pass; phone check after deploy |
 | 5 | Activation (token, profile, webhook) | Not started |
 | 6 | Real replies | Not started |
 | 7 | Lifecycle: delete, token change, expiry, retire dev endpoint | Not started |
@@ -81,5 +81,20 @@ Code: `stubs/manager.py`.
 - [x] Local: 28 tests; 25 pass and 3 are skipped (Stages 4, 5, 7). Five new Stage 3 tests cover webhook registration, the intro reply, forged updates, quietly accepting a `managed_bot` update, and the dev status endpoint not leaking secrets.
 - [x] The tests catch breakage: removing the manager secret check makes them fail.
 - [x] With no token, the smoke test passes and links use the placeholder.
-- [ ] Hosted: `GET /v1/_dev/manager` shows `can_manage_bots: true`, `webhook_url` equal to `expected_webhook_url`, `pending_update_count: 0` and no `last_error_message`.
-- [ ] Hosted: sending `/start` to the manager bot from a phone gets the intro reply.
+- [x] Hosted: `GET /v1/_dev/manager` shows `@h4h_manager_bot`, `can_manage_bots: true`, the webhook at `/telegram/manager` with `allowed_updates` `[message, managed_bot]`, `pending_update_count: 0` and no errors. The live smoke test passes, and `creation_link` now points at `t.me/h4h_manager_bot?start=<bot_id>`.
+- [x] Hosted: sending `/start` to `@h4h_manager_bot` from a phone gets the intro reply.
+
+## Stage 4 checks
+
+Code: `stubs/manager.py` (`handle_start`, `handle_managed_bot`) and a new `claimed_at` column.
+- **`/start <bot_id>`:** a pending bot is claimed (the sender's `organizer_tg_id` and `claimed_at` are saved). The reply has a `request_managed_bot` button pre-filled with `display_name` and `username`.
+  - A malformed, unknown, deleted or failed ID gets "invalid link". An expired one gets "expired". An active one gets its `t.me` link.
+  - While the bot is pending, the latest person to open the link wins.
+- **`managed_bot` update:** among the creator's claimed pending bots, it picks the one whose `config.username` matches the new bot's username; otherwise, the most recently claimed. It stores `telegram_bot_id` and `telegram_username`, and the bot stays `pending` until Stage 5.
+  - If the creator has no claim, they're told and nothing is linked.
+  - A repeat update for a bot that's already linked is ignored (token and owner changes are Stage 7).
+
+- [x] Local: 35 tests; 33 pass and 2 are skipped (Stages 5, 7). Eight new Stage 4 tests.
+- [x] The tests catch breakage: matching any creator's claim, ignoring the username preference, or skipping the expiry check each make a test fail.
+- [ ] Phone, keeping the suggested username: create a bot via the API → open `creation_link` → tap "Создать бота" → confirm. The manager replies "Бот @… создан", and the Render log shows `match: @… -> bot <id> by username`.
+- [ ] Phone, changing the username in Telegram: same steps; the log shows `by most recent claim` with the new username.

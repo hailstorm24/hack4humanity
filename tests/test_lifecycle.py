@@ -10,9 +10,11 @@ each stage lands, its skip is removed and the dev-activate shortcut in
 
     python3 -m unittest discover -s tests -v
 """
+import itertools
 import json
 import os
 import socket
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -41,6 +43,12 @@ CONFIG = {
 }
 ORGANIZER = {"id": 555000111, "is_bot": False, "first_name": "Oksana"}
 READER = {"id": 555000222, "is_bot": False, "first_name": "Oleh"}
+_org_ids = itertools.count(600000001)
+
+
+def new_organizer():
+    """A fresh Telegram user per test, so claims never leak between tests."""
+    return {"id": next(_org_ids), "is_bot": False, "first_name": "Org"}
 
 
 def free_port():
@@ -108,6 +116,24 @@ class LifecycleTest(unittest.TestCase):
         self.assertEqual(status, 200, act)
         telegram.set_webhook(token, act["webhook_url"], act["secret_token"], allowed_updates=["message"])
         return token
+
+    def db(self):
+        return sqlite3.connect(os.path.join(self.tmp.name, "test.db"))
+
+    def _row(self, bot_id):
+        with self.db() as c:
+            c.row_factory = sqlite3.Row
+            return dict(c.execute("SELECT * FROM bots WHERE bot_id=?", (bot_id,)).fetchone())
+
+    def _pending(self, **overrides):
+        status, bot = self.api("POST", "/v1/bots", {**CONFIG, **overrides})
+        self.assertEqual(status, 201, bot)
+        return bot["bot_id"]
+
+    def _start(self, org, bot_id):
+        """Organizer opens the creation link; returns the manager's reply."""
+        self.fake.user_sends(self.manager, org, text=f"/start {bot_id}")
+        return self.fake.sent_to(org["id"])[-1]
 
     def _new_active_bot(self, username):
         status, bot = self.api("POST", "/v1/bots", {**CONFIG, "username": username})
@@ -201,12 +227,10 @@ class LifecycleTest(unittest.TestCase):
                                   {"X-Telegram-Bot-Api-Secret-Token": "wrong"}), (200, None))
         self.assertEqual(len(self.fake.outbox), before)
 
-    def test_stage3_managed_bot_update_accepted_quietly(self):
-        # Until Stage 5 it is only logged; it must not error or message the organizer.
-        before = len(self.fake.sent_to(ORGANIZER["id"]))
-        _, responses = self.fake.create_managed_bot(self.manager, ORGANIZER, "stage3_probe_bot", "Probe")
+    def test_stage3_managed_bot_update_returns_200(self):
+        org = new_organizer()
+        _, responses = self.fake.create_managed_bot(self.manager, org, "stage3_probe_bot", "Probe")
         self.assertEqual([r[0] for r in responses], [200, 200])
-        self.assertEqual(len(self.fake.sent_to(ORGANIZER["id"])), before)
 
     def test_stage3_dev_status_reports_setup_without_secrets(self):
         self.assertEqual(self.api("GET", "/v1/_dev/manager")[0], 403)
@@ -219,20 +243,94 @@ class LifecycleTest(unittest.TestCase):
         self.assertNotIn(self.manager, dumped)
         self.assertNotIn(self.fake.bot(self.manager)["webhook"]["secret_token"], dumped)
 
-    @unittest.skip("Stage 4: /start <bot_id> records organizer and offers the create button")
+    # --- Stage 4: creation link + matching ----------------------------------------
+
     def test_stage4_start_link_offers_create_button(self):
-        status, bot = self.api("POST", "/v1/bots", CONFIG)
-        self.fake.user_sends(self.manager, ORGANIZER, text=f"/start {bot['bot_id']}")
-        markup = self.fake.sent_to(ORGANIZER["id"])[-1]["reply_markup"]
-        req = markup["keyboard"][0][0]["request_managed_bot"]
+        org, bot_id = new_organizer(), self._pending()
+        sent = self._start(org, bot_id)
+        req = sent["reply_markup"]["keyboard"][0][0]["request_managed_bot"]
         self.assertEqual((req["suggested_name"], req["suggested_username"]),
                          (CONFIG["display_name"], CONFIG["username"]))
+        self.assertTrue(0 <= req["request_id"] < 2**31)
+        row = self._row(bot_id)
+        self.assertEqual((row["organizer_tg_id"], row["status"]), (org["id"], "pending"))
+        self.assertTrue(row["claimed_at"])
+
+    def test_stage4_start_link_rejects_bad_unknown_expired_and_active(self):
+        org = new_organizer()
+        self.assertIn("недействительна", self._start(org, "not-a-uuid")["text"])
+        self.assertIn("недействительна", self._start(org, "00000000-0000-0000-0000-000000000000")["text"])
+        expired = self._pending()
+        with self.db() as c:
+            c.execute("UPDATE bots SET expires_at='2000-01-01T00:00:00Z' WHERE bot_id=?", (expired,))
+        self.assertIn("истёк", self._start(org, expired)["text"])
+        active, _ = self._new_active_bot("stage4_active_bot")
+        self.assertIn("t.me/stage4_active_bot", self._start(org, active["bot_id"])["text"])
+        deleted = self._pending()
+        self.api("DELETE", f"/v1/bots/{deleted}")
+        self.assertIn("недействительна", self._start(org, deleted)["text"])
+        for bot_id in (expired, active["bot_id"], deleted):
+            self.assertIsNone(self._row(bot_id)["organizer_tg_id"])
+
+    def test_stage4_managed_bot_matched_to_claim(self):
+        org, bot_id = new_organizer(), self._pending()
+        self._start(org, bot_id)
+        _, responses = self.fake.create_managed_bot(self.manager, org, CONFIG["username"], "Odesa")
+        self.assertEqual([r[0] for r in responses], [200, 200])
+        row = self._row(bot_id)
+        self.assertEqual(row["telegram_bot_id"], self.fake.bot(CONFIG["username"])["id"])
+        self.assertEqual((row["telegram_username"], row["status"]), (CONFIG["username"], "pending"))
+        sent = self.fake.sent_to(org["id"])[-1]
+        self.assertIn("@" + CONFIG["username"], sent["text"])
+        self.assertEqual(sent["reply_markup"], {"remove_keyboard": True})
+
+    def test_stage4_changed_username_still_matches(self):
+        org, bot_id = new_organizer(), self._pending(username="wanted_name_bot")
+        self._start(org, bot_id)
+        self.fake.create_managed_bot(self.manager, org, "organizer_picked_bot", "Odesa")
+        self.assertEqual(self._row(bot_id)["telegram_username"], "organizer_picked_bot")
+
+    def test_stage4_two_claims_prefer_username_then_latest(self):
+        org = new_organizer()
+        first, second = self._pending(username="first_claim_bot"), self._pending(username="second_claim_bot")
+        self._start(org, first)
+        time.sleep(1.1)  # claimed_at has 1 s resolution
+        self._start(org, second)
+        self.fake.create_managed_bot(self.manager, org, "first_claim_bot", "One")  # username wins
+        self.assertEqual(self._row(first)["telegram_username"], "first_claim_bot")
+        self.assertIsNone(self._row(second)["telegram_bot_id"])
+        self.fake.create_managed_bot(self.manager, org, "renamed_second_bot", "Two")  # then latest claim
+        self.assertEqual(self._row(second)["telegram_username"], "renamed_second_bot")
+
+    def test_stage4_unclaimed_creator_is_told_and_nothing_linked(self):
+        org, bot_id = new_organizer(), self._pending()  # never opened the link
+        self.fake.create_managed_bot(self.manager, org, "stray_bot", "Stray")
+        self.assertIn("не нашёл", self.fake.sent_to(org["id"])[-1]["text"])
+        self.assertIsNone(self._row(bot_id)["telegram_bot_id"])
+
+    def test_stage4_repeat_update_for_linked_bot_is_ignored(self):
+        org, bot_id = new_organizer(), self._pending()
+        self._start(org, bot_id)
+        token, _ = self.fake.create_managed_bot(self.manager, org, "repeat_test_bot", "Rep")
+        before = len(self.fake.sent_to(org["id"]))
+        bot_user = {"id": self.fake.bot(token)["id"], "is_bot": True, "first_name": "Rep",
+                    "username": "repeat_test_bot"}
+        self.assertEqual(self.fake.deliver(self.manager, {"managed_bot": {"user": org, "bot": bot_user}})[0], 200)
+        self.assertEqual(len(self.fake.sent_to(org["id"])), before)
+        self.assertEqual(self._row(bot_id)["telegram_username"], "repeat_test_bot")
+
+    def test_stage4_reopening_link_after_link_reports_progress(self):
+        org, bot_id = new_organizer(), self._pending()
+        self._start(org, bot_id)
+        self.fake.create_managed_bot(self.manager, org, "progress_test_bot", "Prog")
+        self.assertIn("@progress_test_bot", self._start(org, bot_id)["text"])
 
     @unittest.skip("Stage 5: managed_bot update activates the bot without the dev endpoint")
     def test_stage5_managed_bot_update_activates(self):
+        org = new_organizer()
         status, bot = self.api("POST", "/v1/bots", CONFIG)
-        self.fake.user_sends(self.manager, ORGANIZER, text=f"/start {bot['bot_id']}")
-        token, _ = self.fake.create_managed_bot(self.manager, ORGANIZER, "renamed_by_organizer_bot", "Odesa")
+        self.fake.user_sends(self.manager, org, text=f"/start {bot['bot_id']}")
+        token, _ = self.fake.create_managed_bot(self.manager, org, "renamed_by_organizer_bot", "Odesa")
         status, got = self.api("GET", f"/v1/bots/{bot['bot_id']}")
         self.assertEqual(got["status"], "active")
         self.assertEqual(got["telegram_username"], "renamed_by_organizer_bot")

@@ -40,6 +40,7 @@ COLUMNS = [
     ("telegram_bot_id", "BIGINT"),           # managed bot's Telegram user id
     ("organizer_tg_id", "BIGINT"),           # organizer's Telegram user id, learned from /start <bot_id>
     ("telegram_username", "TEXT"),           # actual username; may differ from config.username
+    ("claimed_at", "TEXT"),                  # when organizer_tg_id last opened the /start link
 ]
 INDEXES = [
     "CREATE UNIQUE INDEX IF NOT EXISTS bots_telegram_bot_id ON bots (telegram_bot_id) WHERE telegram_bot_id IS NOT NULL",
